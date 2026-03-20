@@ -1,0 +1,11 @@
+# L1: Namespace — Environment Isolation
+# A Namespace provides a mechanism for isolating groups of resources within a single cluster.
+# Names of resources need to be unique within a namespace, but not across namespaces.
+# Use cases: multi-tenant isolation, environment separation (dev/staging/prod).
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: demo
+  labels:
+    environment: demo
+    managed-by: manual

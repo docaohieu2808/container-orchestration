@@ -1,0 +1,37 @@
+# L2: ConfigMap — App Config via Env Vars and File Mount
+# ConfigMap decouples configuration from container images.
+# Two consumption patterns shown: env var injection and volume file mount.
+# Never store sensitive data in ConfigMap — use Secret for passwords/tokens.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: app-config
+  namespace: demo
+  labels:
+    app: nginx
+data:
+  # Key-value pairs injected as environment variables (envFrom / env.valueFrom)
+  APP_ENV: "production"
+  APP_PORT: "80"
+  LOG_LEVEL: "info"
+  MAX_CONNECTIONS: "100"
+
+  # Multi-line value mounted as a file via volumeMounts
+  nginx.conf: |
+    server {
+        listen 80;
+        server_name _;
+
+        access_log /var/log/nginx/access.log;
+        error_log  /var/log/nginx/error.log;
+
+        location / {
+            root   /usr/share/nginx/html;
+            index  index.html index.htm;
+        }
+
+        location /health {
+            return 200 "OK\n";
+            add_header Content-Type text/plain;
+        }
+    }

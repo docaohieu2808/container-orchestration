@@ -1,0 +1,39 @@
+# L3: RBAC — Developer Role (Namespace-Scoped)
+# Role + RoleBinding grant permissions within a single Namespace.
+# Principle of least privilege: developers get read/write on workloads but cannot
+# touch Secrets, RBAC resources, or cluster-level objects.
+# ClusterRole + ClusterRoleBinding would grant permissions cluster-wide.
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: developer-role
+  namespace: demo
+rules:
+  - apiGroups: [""]
+    resources: ["pods", "pods/log", "pods/exec", "services", "endpoints", "configmaps"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  - apiGroups: ["apps"]
+    resources: ["deployments", "replicasets", "statefulsets", "daemonsets"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  - apiGroups: ["autoscaling"]
+    resources: ["horizontalpodautoscalers"]
+    verbs: ["get", "list", "watch"]
+  # Deliberately omitted: secrets (sensitive), rbac (privilege escalation risk)
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: developer-rolebinding
+  namespace: demo
+subjects:
+  - kind: User
+    name: alice                  # Must match CN in the client certificate or OIDC claim
+    apiGroup: rbac.authorization.k8s.io
+  - kind: ServiceAccount
+    name: ci-service-account     # CI/CD pipeline service account
+    namespace: demo
+roleRef:
+  kind: Role
+  name: developer-role
+  apiGroup: rbac.authorization.k8s.io

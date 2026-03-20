@@ -1,0 +1,51 @@
+# L-MAX: K3s — Embedded Registry Mirror Configuration
+# K3s supports registry mirrors via /etc/rancher/k3s/registries.yaml.
+# This config is read by containerd (embedded in K3s) at startup.
+# Use cases:
+#   1. Mirror Docker Hub to avoid rate limits (pull-through cache)
+#   2. Use a private registry (Harbor, ECR, GCR) without modifying image references
+#   3. Air-gapped clusters: mirror all registries to an internal server
+#
+# Deploy: copy this file to /etc/rancher/k3s/registries.yaml on EVERY K3s node,
+# then restart K3s: systemctl restart k3s (server) or systemctl restart k3s-agent (agent)
+#
+# File location: /etc/rancher/k3s/registries.yaml
+mirrors:
+  # Mirror Docker Hub pulls through a local registry cache (avoids 100 pulls/6h limit)
+  "docker.io":
+    endpoint:
+      - "http://registry-mirror.local:5000"    # Local registry mirror (e.g. registry:2 container)
+      - "https://registry-1.docker.io"         # Fallback to Docker Hub if mirror is unavailable
+
+  # Mirror for Google Container Registry
+  "gcr.io":
+    endpoint:
+      - "http://registry-mirror.local:5000"
+
+  # Mirror for GitHub Container Registry
+  "ghcr.io":
+    endpoint:
+      - "http://registry-mirror.local:5000"
+
+  # Private registry rewrite: images pulled as "private.example.com/myapp:v1"
+  # are served from the internal Harbor instance
+  "private.example.com":
+    endpoint:
+      - "https://harbor.internal.example.com"
+
+configs:
+  # TLS and auth config for the private registry
+  "harbor.internal.example.com":
+    auth:
+      username: admin           # Registry username
+      password: Harbor12345     # Registry password (use a secret manager in production)
+    tls:
+      # Provide CA cert if using self-signed TLS (common for internal Harbor)
+      ca_file: /etc/rancher/k3s/certs/harbor-ca.crt
+      # Or disable TLS verification (NOT recommended for production):
+      # insecure_skip_verify: true
+
+  # Allow insecure HTTP for local development mirror
+  "registry-mirror.local:5000":
+    tls:
+      insecure_skip_verify: true

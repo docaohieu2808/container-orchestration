@@ -1,0 +1,86 @@
+# L4: Operator Controller Deployment with RBAC
+# The Operator is a controller deployed as a Pod in the cluster.
+# It uses a ServiceAccount with RBAC permissions to watch WebApp CRs and
+# manage child resources (Deployments, Services) on behalf of the user.
+# The Operator pattern: Watch -> Diff -> Act (reconcile loop).
+---
+# ServiceAccount for the operator Pod
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: webapp-operator-sa
+  namespace: demo
+---
+# ClusterRole: permissions needed by the operator
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: webapp-operator-clusterrole
+rules:
+  # Watch and manage WebApp custom resources
+  - apiGroups: ["apps.example.com"]
+    resources: ["webapps", "webapps/status"]
+    verbs: ["get", "list", "watch", "update", "patch"]
+  # Manage child Deployments and Services
+  - apiGroups: ["apps"]
+    resources: ["deployments"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  - apiGroups: [""]
+    resources: ["services"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  # Read events for debugging
+  - apiGroups: [""]
+    resources: ["events"]
+    verbs: ["create", "patch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: webapp-operator-clusterrolebinding
+subjects:
+  - kind: ServiceAccount
+    name: webapp-operator-sa
+    namespace: demo
+roleRef:
+  kind: ClusterRole
+  name: webapp-operator-clusterrole
+  apiGroup: rbac.authorization.k8s.io
+---
+# Operator Deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: webapp-operator
+  namespace: demo
+  labels:
+    app: webapp-operator
+spec:
+  replicas: 1       # Operators typically run as a single replica (leader election for HA)
+  selector:
+    matchLabels:
+      app: webapp-operator
+  template:
+    metadata:
+      labels:
+        app: webapp-operator
+    spec:
+      serviceAccountName: webapp-operator-sa
+      containers:
+        - name: operator
+          image: example/webapp-operator:latest   # Built from l5-custom-controller Go code
+          command: ["/manager"]
+          args:
+            - "--leader-elect=true"    # Enable leader election for HA deployments
+            - "--namespace=demo"
+          resources:
+            requests:
+              cpu: "50m"
+              memory: "64Mi"
+            limits:
+              cpu: "200m"
+              memory: "256Mi"
+          env:
+            - name: WATCH_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace

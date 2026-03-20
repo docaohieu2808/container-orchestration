@@ -1,0 +1,73 @@
+# L2: K3s — Traefik IngressRoute with TLS and Middleware
+# K3s ships Traefik v2 as the default ingress controller.
+# Traefik provides its own CRDs (IngressRoute, Middleware, TLSOption) that are
+# more powerful than the standard Ingress resource.
+# IngressRoute replaces nginx Ingress annotations with explicit CRD-based routing.
+#
+# Apply: kubectl apply -f traefik-ingressroute-host-tls-middleware.yaml
+---
+# Middleware: redirect HTTP to HTTPS
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: redirect-https
+  namespace: demo
+spec:
+  redirectScheme:
+    scheme: https
+    permanent: true   # 301 redirect
+---
+# Middleware: strip /api prefix before forwarding to backend
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: strip-api-prefix
+  namespace: demo
+spec:
+  stripPrefix:
+    prefixes:
+      - /api
+---
+# IngressRoute: HTTPS routing with TLS termination
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: nginx-ingressroute-tls
+  namespace: demo
+spec:
+  entryPoints:
+    - websecure    # Port 443 entrypoint defined in Traefik config
+  routes:
+    - match: Host(`demo.example.com`) && PathPrefix(`/`)
+      kind: Rule
+      services:
+        - name: nginx-clusterip
+          port: 80
+    - match: Host(`demo.example.com`) && PathPrefix(`/api`)
+      kind: Rule
+      middlewares:
+        - name: strip-api-prefix
+      services:
+        - name: api-service
+          port: 8080
+  tls:
+    secretName: demo-tls-secret    # kubernetes.io/tls Secret with tls.crt and tls.key
+    # To use cert-manager: annotate with cert-manager.io/cluster-issuer: letsencrypt-prod
+---
+# IngressRoute: HTTP -> HTTPS redirect
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: nginx-ingressroute-http-redirect
+  namespace: demo
+spec:
+  entryPoints:
+    - web    # Port 80 entrypoint
+  routes:
+    - match: Host(`demo.example.com`)
+      kind: Rule
+      middlewares:
+        - name: redirect-https
+      services:
+        - name: nginx-clusterip
+          port: 80

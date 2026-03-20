@@ -1,0 +1,80 @@
+# L4: CRD — WebApp Custom Resource Definition
+# A CustomResourceDefinition extends the Kubernetes API with a new resource type.
+# Once applied, users can create/list/delete WebApp objects like built-in resources.
+# The CRD defines the schema (OpenAPI v3); the Operator watches and reconciles instances.
+# Pattern: group=apps.example.com, version=v1alpha1, kind=WebApp
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: webapps.apps.example.com    # Must be <plural>.<group>
+spec:
+  group: apps.example.com           # API group for the custom resource
+  names:
+    kind: WebApp                    # PascalCase singular kind
+    listKind: WebAppList
+    plural: webapps                 # Used in URL: /apis/apps.example.com/v1alpha1/webapps
+    singular: webapp
+    shortNames:
+      - wa                          # kubectl get wa
+  scope: Namespaced                 # Namespaced or Cluster
+  versions:
+    - name: v1alpha1
+      served: true                  # This version is served by the API server
+      storage: true                 # This version is used for storage in etcd
+      schema:
+        openAPIV3Schema:
+          type: object
+          properties:
+            spec:
+              type: object
+              required: ["image", "replicas"]
+              properties:
+                image:
+                  type: string
+                  description: "Container image for the web application"
+                replicas:
+                  type: integer
+                  minimum: 1
+                  maximum: 50
+                  description: "Number of desired Pod replicas"
+                port:
+                  type: integer
+                  default: 80
+                  description: "Container port to expose"
+                env:
+                  type: array
+                  items:
+                    type: object
+                    properties:
+                      name:
+                        type: string
+                      value:
+                        type: string
+            status:
+              type: object
+              properties:
+                availableReplicas:
+                  type: integer
+                  description: "Number of Pods currently available"
+                phase:
+                  type: string
+                  enum: ["Pending", "Running", "Failed"]
+                  description: "Current lifecycle phase"
+      subresources:
+        status: {}                  # Enable /status subresource for status updates
+      additionalPrinterColumns:
+        - name: Image
+          type: string
+          jsonPath: .spec.image
+        - name: Replicas
+          type: integer
+          jsonPath: .spec.replicas
+        - name: Available
+          type: integer
+          jsonPath: .status.availableReplicas
+        - name: Phase
+          type: string
+          jsonPath: .status.phase
+        - name: Age
+          type: date
+          jsonPath: .metadata.creationTimestamp

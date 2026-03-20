@@ -1,0 +1,16 @@
+# L3: StorageClass — Local Path Provisioner (K3s)
+# StorageClass enables dynamic provisioning: PVCs are fulfilled automatically
+# without pre-creating PersistentVolumes.
+# K3s ships with rancher.io/local-path as the default StorageClass.
+# Data is stored on the node's local filesystem — NOT replicated across nodes.
+# For HA storage, deploy Longhorn (k3s-compatible distributed block storage).
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: local-path
+  annotations:
+    storageclass.kubernetes.io/is-default-class: "true"   # PVCs with no storageClass use this
+provisioner: rancher.io/local-path    # Built-in K3s provisioner
+volumeBindingMode: WaitForFirstConsumer   # Delay binding until Pod is scheduled (topology-aware)
+reclaimPolicy: Delete     # Delete the PV when PVC is deleted (use Retain for production data)
+allowVolumeExpansion: false   # local-path does not support online resize

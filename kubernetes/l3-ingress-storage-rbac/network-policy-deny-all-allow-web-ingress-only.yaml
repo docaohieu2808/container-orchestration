@@ -1,0 +1,60 @@
+# L3: NetworkPolicy — Default Deny All, Allow Web Ingress Only
+# NetworkPolicy controls traffic flow at the IP/port level between Pods.
+# Requires a CNI plugin that enforces NetworkPolicy (Calico, Cilium, Weave).
+# K3s default CNI (Flannel) does NOT enforce NetworkPolicy — install Calico for enforcement.
+# Pattern: start with deny-all, then selectively allow required traffic (zero-trust).
+---
+# Step 1: Deny all ingress and egress in the namespace (zero-trust baseline)
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny-all
+  namespace: demo
+spec:
+  podSelector: {}       # Applies to ALL Pods in the namespace
+  policyTypes:
+    - Ingress
+    - Egress
+---
+# Step 2: Allow ingress to web Pods only from the ingress controller namespace
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-web-ingress-from-ingress-controller
+  namespace: demo
+spec:
+  podSelector:
+    matchLabels:
+      tier: web         # Only applies to Pods labeled tier=web
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system   # Ingress controller namespace
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: traefik            # Only from Traefik ingress pods
+      ports:
+        - protocol: TCP
+          port: 80
+---
+# Step 3: Allow egress from web Pods to DNS only (port 53)
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-web-egress-dns-only
+  namespace: demo
+spec:
+  podSelector:
+    matchLabels:
+      tier: web
+  policyTypes:
+    - Egress
+  egress:
+    - ports:
+        - protocol: UDP
+          port: 53     # DNS resolution via kube-dns/CoreDNS
+        - protocol: TCP
+          port: 53

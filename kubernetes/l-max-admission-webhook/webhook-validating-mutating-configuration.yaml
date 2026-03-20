@@ -1,0 +1,64 @@
+# L-MAX: Admission Webhook — ValidatingWebhookConfiguration + MutatingWebhookConfiguration
+# Admission webhooks intercept API server requests BEFORE objects are persisted to etcd.
+# Two types:
+#   - MutatingAdmissionWebhook: can modify the object (inject sidecars, set defaults)
+#   - ValidatingAdmissionWebhook: can accept or reject the object (policy enforcement)
+# The webhook server must serve TLS. caBundle contains the CA cert (base64) that signed
+# the webhook server TLS cert. Use cert-manager to automate TLS rotation.
+---
+# MutatingWebhookConfiguration: inject default resource limits if omitted
+apiVersion: admissionregistration.k8s.io/v1
+kind: MutatingWebhookConfiguration
+metadata:
+  name: webapp-mutating-webhook
+  labels:
+    app: webapp-webhook
+spec:
+  webhooks:
+    - name: mutate.webapp.apps.example.com
+      admissionReviewVersions: ["v1"]
+      sideEffects: None           # Required: None means no out-of-band side effects
+      failurePolicy: Fail         # Reject request if webhook is unreachable (use Ignore for non-critical)
+      clientConfig:
+        service:
+          name: webapp-webhook-service
+          namespace: demo
+          path: /mutate-apps-example-com-v1alpha1-webapp
+          port: 443
+        caBundle: ""              # Replace with: $(kubectl get secret webhook-tls -o jsonpath='{.data.ca\.crt}')
+      rules:
+        - apiGroups: ["apps.example.com"]
+          apiVersions: ["v1alpha1"]
+          operations: ["CREATE", "UPDATE"]
+          resources: ["webapps"]
+          scope: "Namespaced"
+      namespaceSelector:
+        matchLabels:
+          webhook-injection: enabled    # Only intercept namespaces with this label
+---
+# ValidatingWebhookConfiguration: reject WebApps with image:latest tag
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingWebhookConfiguration
+metadata:
+  name: webapp-validating-webhook
+  labels:
+    app: webapp-webhook
+spec:
+  webhooks:
+    - name: validate.webapp.apps.example.com
+      admissionReviewVersions: ["v1"]
+      sideEffects: None
+      failurePolicy: Fail
+      clientConfig:
+        service:
+          name: webapp-webhook-service
+          namespace: demo
+          path: /validate-apps-example-com-v1alpha1-webapp
+          port: 443
+        caBundle: ""              # Replace with base64-encoded CA cert
+      rules:
+        - apiGroups: ["apps.example.com"]
+          apiVersions: ["v1alpha1"]
+          operations: ["CREATE", "UPDATE"]
+          resources: ["webapps"]
+          scope: "Namespaced"

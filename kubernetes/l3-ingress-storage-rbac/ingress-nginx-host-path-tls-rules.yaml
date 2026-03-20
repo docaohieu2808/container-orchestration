@@ -1,0 +1,40 @@
+# L3: Ingress — Nginx Host/Path Routing with TLS Termination
+# Ingress exposes HTTP/HTTPS routes from outside the cluster to Services inside.
+# Requires an Ingress Controller (nginx-ingress, Traefik on K3s) to be running.
+# On K3s (Oracle 10.10.0.5), Traefik is the default ingress controller.
+# TLS termination happens at the Ingress; backend Services use plain HTTP.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: nginx-ingress-rules
+  namespace: demo
+  annotations:
+    # For nginx ingress controller:
+    nginx.ingress.kubernetes.io/rewrite-target: /
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+    # For Traefik (K3s default) — use IngressRoute CRD instead, or keep annotations:
+    # traefik.ingress.kubernetes.io/router.entrypoints: websecure
+spec:
+  ingressClassName: nginx    # Change to "traefik" on K3s
+  tls:
+    - hosts:
+        - demo.example.com
+      secretName: demo-tls-secret    # TLS cert stored as a Secret (type: kubernetes.io/tls)
+  rules:
+    - host: demo.example.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: nginx-clusterip
+                port:
+                  number: 80
+          - path: /api
+            pathType: Prefix
+            backend:
+              service:
+                name: api-service     # Separate backend for /api prefix
+                port:
+                  number: 8080

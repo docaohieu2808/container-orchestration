@@ -1,0 +1,21 @@
+# L3: PersistentVolumeClaim — Standard Storage Request
+# A PVC is a request for storage by a user. It binds to a PersistentVolume (PV)
+# that satisfies the claim's requirements (size, access mode, storage class).
+# On K3s, the default StorageClass uses local-path provisioner (hostPath backed).
+# For production, use network storage: NFS, Longhorn, Ceph, or cloud block storage.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: app-data-pvc
+  namespace: demo
+  labels:
+    app: nginx
+spec:
+  accessModes:
+    - ReadWriteOnce     # RWO: mounted read-write by a single node at a time
+    # - ReadWriteMany   # RWX: mounted read-write by many nodes (requires NFS/Ceph)
+    # - ReadOnlyMany    # ROX: mounted read-only by many nodes
+  storageClassName: local-path    # K3s default; use "standard" on minikube
+  resources:
+    requests:
+      storage: 5Gi      # Request 5 GiB of persistent storage

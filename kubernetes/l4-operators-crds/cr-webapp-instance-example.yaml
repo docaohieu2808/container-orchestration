@@ -1,0 +1,26 @@
+# L4: Custom Resource — WebApp Instance Example
+# A CR is a concrete instance of the CRD schema (like a Pod is an instance of the Pod schema).
+# The Operator watches for WebApp objects and reconciles the desired state:
+# creating/updating Deployments and Services to match spec.replicas, spec.image, etc.
+# Apply after the CRD is registered: kubectl apply -f crd-webapp-custom-resource-definition.yaml
+apiVersion: apps.example.com/v1alpha1
+kind: WebApp
+metadata:
+  name: my-webapp
+  namespace: demo
+  labels:
+    app: my-webapp
+    managed-by: webapp-operator
+spec:
+  image: nginx:1.25-alpine    # The Operator will create a Deployment with this image
+  replicas: 3                 # The Operator ensures this many Pods are running
+  port: 80                    # The Operator creates a Service targeting this port
+  env:
+    - name: APP_ENV
+      value: "production"
+    - name: LOG_LEVEL
+      value: "info"
+# status is managed by the Operator (written via /status subresource):
+# status:
+#   availableReplicas: 3
+#   phase: Running

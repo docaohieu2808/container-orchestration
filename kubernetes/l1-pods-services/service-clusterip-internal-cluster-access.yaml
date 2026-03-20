@@ -1,0 +1,21 @@
+# L1: Service — ClusterIP (Internal Cluster Access)
+# ClusterIP is the default Service type. It exposes the Service on a cluster-internal IP.
+# Only reachable from within the cluster — ideal for inter-service communication.
+# kube-proxy programs iptables/IPVS rules to load-balance traffic across matching Pods.
+apiVersion: v1
+kind: Service
+metadata:
+  name: nginx-clusterip
+  namespace: demo
+  labels:
+    app: nginx
+spec:
+  type: ClusterIP
+  selector:
+    app: nginx        # Routes traffic to Pods with this label
+    tier: web
+  ports:
+    - name: http
+      protocol: TCP
+      port: 80        # Port exposed on the ClusterIP
+      targetPort: 80  # Port on the Pod container

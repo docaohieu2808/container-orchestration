@@ -1,0 +1,125 @@
+# L4: K3s — etcd Backup CronJob with S3 Upload
+# K3s supports built-in etcd snapshots via: k3s etcd-snapshot save
+# This CronJob runs on the server node, triggers a snapshot, and uploads to S3.
+# For K3s, etcd snapshots are stored at: /var/lib/rancher/k3s/server/db/snapshots/
+#
+# K3s also supports automatic snapshots natively (no CronJob needed):
+#   k3s server --etcd-snapshot-schedule-cron="0 */6 * * *" --etcd-snapshot-retention=5
+# This CronJob adds S3 offsite upload on top of local snapshots.
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: etcd-backup-sa
+  namespace: kube-system
+---
+# RBAC: allow the backup job to run privileged on server nodes
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: etcd-backup-clusterrole
+rules:
+  - apiGroups: [""]
+    resources: ["nodes"]
+    verbs: ["get", "list"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: etcd-backup-clusterrolebinding
+subjects:
+  - kind: ServiceAccount
+    name: etcd-backup-sa
+    namespace: kube-system
+roleRef:
+  kind: ClusterRole
+  name: etcd-backup-clusterrole
+  apiGroup: rbac.authorization.k8s.io
+---
+# Secret: S3 credentials for backup upload
+apiVersion: v1
+kind: Secret
+metadata:
+  name: etcd-backup-s3-credentials
+  namespace: kube-system
+type: Opaque
+data:
+  AWS_ACCESS_KEY_ID: REPLACEME_BASE64      # echo -n 'AKIAIOSFODNN7EXAMPLE' | base64
+  AWS_SECRET_ACCESS_KEY: REPLACEME_BASE64  # echo -n 'your-secret-key' | base64
+  S3_BUCKET: REPLACEME_BASE64              # echo -n 'my-k3s-etcd-backups' | base64
+  S3_REGION: REPLACEME_BASE64              # echo -n 'ap-southeast-1' | base64
+---
+# CronJob: snapshot etcd and upload to S3 every 6 hours
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: etcd-backup-to-s3
+  namespace: kube-system
+spec:
+  schedule: "0 */6 * * *"    # Every 6 hours
+  concurrencyPolicy: Forbid   # Don't run if previous job is still running
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          serviceAccountName: etcd-backup-sa
+          restartPolicy: OnFailure
+
+          # Pin to control-plane node where etcd data lives
+          nodeSelector:
+            node-role.kubernetes.io/control-plane: "true"
+          tolerations:
+            - key: node-role.kubernetes.io/control-plane
+              operator: Exists
+              effect: NoSchedule
+
+          containers:
+            - name: etcd-backup
+              image: amazon/aws-cli:2.15.0
+              command:
+                - /bin/sh
+                - -c
+                - |
+                  set -e
+                  SNAPSHOT_NAME="etcd-snapshot-$(date +%Y%m%d-%H%M%S).db"
+                  SNAPSHOT_PATH="/backup/${SNAPSHOT_NAME}"
+
+                  echo "[INFO] Triggering K3s etcd snapshot..."
+                  # K3s CLI is on the host — use hostPID + nsenter to run it
+                  # Alternatively, mount the k3s binary and run directly
+                  cp /var/lib/rancher/k3s/server/db/snapshots/$(ls -t /var/lib/rancher/k3s/server/db/snapshots/ | head -1) "${SNAPSHOT_PATH}"
+
+                  echo "[INFO] Uploading ${SNAPSHOT_NAME} to s3://${S3_BUCKET}/etcd-backups/..."
+                  aws s3 cp "${SNAPSHOT_PATH}" "s3://${S3_BUCKET}/etcd-backups/${SNAPSHOT_NAME}" \
+                    --region "${S3_REGION}"
+
+                  echo "[INFO] Cleaning local backup file..."
+                  rm -f "${SNAPSHOT_PATH}"
+
+                  echo "[SUCCESS] Backup complete: ${SNAPSHOT_NAME}"
+              envFrom:
+                - secretRef:
+                    name: etcd-backup-s3-credentials
+              volumeMounts:
+                - name: etcd-snapshots
+                  mountPath: /var/lib/rancher/k3s/server/db/snapshots
+                  readOnly: true
+                - name: backup-tmp
+                  mountPath: /backup
+              resources:
+                requests:
+                  cpu: "50m"
+                  memory: "64Mi"
+                limits:
+                  cpu: "200m"
+                  memory: "256Mi"
+
+          volumes:
+            - name: etcd-snapshots
+              hostPath:
+                path: /var/lib/rancher/k3s/server/db/snapshots
+                type: DirectoryOrCreate
+            - name: backup-tmp
+              emptyDir: {}

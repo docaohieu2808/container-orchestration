@@ -1,0 +1,48 @@
+# L3: RBAC — ReadOnly ClusterRole (Cluster-Wide View)
+# ClusterRole grants permissions across all namespaces (or cluster-scoped resources).
+# This pattern is used for monitoring agents, auditors, or read-only dashboards.
+# ClusterRoleBinding binds it cluster-wide; RoleBinding can scope it to one namespace.
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: readonly-clusterrole
+rules:
+  - apiGroups: [""]
+    resources:
+      - pods
+      - pods/log
+      - services
+      - endpoints
+      - namespaces
+      - nodes
+      - configmaps
+      - persistentvolumes
+      - persistentvolumeclaims
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["apps"]
+    resources: ["deployments", "replicasets", "statefulsets", "daemonsets"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["autoscaling"]
+    resources: ["horizontalpodautoscalers"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["networking.k8s.io"]
+    resources: ["ingresses", "networkpolicies"]
+    verbs: ["get", "list", "watch"]
+  # Deliberately omitted: secrets (sensitive data), rbac resources (privilege info)
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: readonly-clusterrolebinding
+subjects:
+  - kind: Group
+    name: auditors               # All users in the "auditors" group get read-only access
+    apiGroup: rbac.authorization.k8s.io
+  - kind: ServiceAccount
+    name: monitoring-agent       # e.g., Prometheus, Datadog agent
+    namespace: monitoring
+roleRef:
+  kind: ClusterRole
+  name: readonly-clusterrole
+  apiGroup: rbac.authorization.k8s.io

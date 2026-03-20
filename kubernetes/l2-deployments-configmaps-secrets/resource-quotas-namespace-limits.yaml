@@ -1,0 +1,49 @@
+# L2: ResourceQuota — Namespace-level Resource Limits
+# ResourceQuota sets aggregate resource consumption limits per Namespace.
+# Prevents any single team/app from monopolizing cluster resources.
+# LimitRange (companion object) sets per-Pod/Container defaults and limits.
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: demo-namespace-quota
+  namespace: demo
+spec:
+  hard:
+    # Compute resources
+    requests.cpu: "2"           # Total CPU requests across all Pods in namespace
+    requests.memory: "2Gi"      # Total memory requests across all Pods
+    limits.cpu: "4"             # Total CPU limits across all Pods
+    limits.memory: "4Gi"        # Total memory limits across all Pods
+
+    # Object count limits
+    pods: "20"                  # Max number of Pods
+    services: "10"              # Max number of Services
+    secrets: "20"               # Max number of Secrets
+    configmaps: "20"            # Max number of ConfigMaps
+    persistentvolumeclaims: "5" # Max number of PVCs
+
+    # LoadBalancer and NodePort count (expensive resources)
+    services.loadbalancers: "2"
+    services.nodeports: "5"
+---
+# LimitRange: per-container defaults applied when no resources are specified
+apiVersion: v1
+kind: LimitRange
+metadata:
+  name: demo-container-limits
+  namespace: demo
+spec:
+  limits:
+    - type: Container
+      default:
+        cpu: "200m"       # Default limit applied if container omits limits.cpu
+        memory: "256Mi"
+      defaultRequest:
+        cpu: "50m"        # Default request applied if container omits requests.cpu
+        memory: "64Mi"
+      max:
+        cpu: "1"          # Container cannot request more than this
+        memory: "1Gi"
+      min:
+        cpu: "10m"        # Container must request at least this
+        memory: "16Mi"

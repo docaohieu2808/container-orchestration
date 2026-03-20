@@ -1,0 +1,40 @@
+# L1: Pod — Basic Single Container
+# A Pod is the smallest deployable unit in Kubernetes.
+# It wraps one or more containers that share network and storage.
+# In production, Pods are managed by higher-level controllers (Deployment, StatefulSet).
+# Direct Pod creation is used for learning, debugging, or one-off tasks.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: nginx-basic
+  namespace: demo
+  labels:
+    app: nginx
+    tier: web
+spec:
+  containers:
+    - name: nginx
+      image: nginx:1.25-alpine
+      ports:
+        - containerPort: 80
+          protocol: TCP
+      resources:
+        requests:
+          cpu: "50m"
+          memory: "64Mi"
+        limits:
+          cpu: "100m"
+          memory: "128Mi"
+      readinessProbe:
+        httpGet:
+          path: /
+          port: 80
+        initialDelaySeconds: 5
+        periodSeconds: 10
+      livenessProbe:
+        httpGet:
+          path: /
+          port: 80
+        initialDelaySeconds: 15
+        periodSeconds: 20
+  restartPolicy: Always

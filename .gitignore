@@ -1,0 +1,33 @@
+# Kubernetes
+*.kubeconfig
+kubeconfig
+*.key
+*.crt
+*.pem
+secrets/
+*-secret-override.yaml
+
+# Go build artifacts
+kubernetes/l5-custom-controller/manager
+kubernetes/l-max-admission-webhook/webhook-server
+vendor/
+*.test
+
+# Helm
+*.tgz
+charts/
+
+# Terraform / Tofu (if added later)
+.terraform/
+*.tfstate
+*.tfstate.backup
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Editor
+.idea/
+.vscode/
+*.swp
+*.swo
