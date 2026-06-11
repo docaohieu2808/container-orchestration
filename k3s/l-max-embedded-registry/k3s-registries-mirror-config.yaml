@@ -38,7 +38,7 @@ configs:
   "harbor.internal.example.com":
     auth:
       username: admin           # Registry username
-      password: Harbor12345     # Registry password (use a secret manager in production)
+      password: Harbor12345     # PLACEHOLDER — replace with real password; use a secret manager in production
     tls:
       # Provide CA cert if using self-signed TLS (common for internal Harbor)
       ca_file: /etc/rancher/k3s/certs/harbor-ca.crt
