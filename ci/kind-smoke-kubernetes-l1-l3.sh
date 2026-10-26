@@ -118,7 +118,9 @@ openssl req -x509 -newkey rsa:2048 -nodes -days 1 -keyout "${tmp}/tls.key" -out 
 kubectl -n "${NS}" create secret tls demo-tls-secret --cert="${tmp}/tls.crt" --key="${tmp}/tls.key"
 helm repo add traefik https://traefik.github.io/charts >/dev/null
 helm install traefik traefik/traefik --version "${TRAEFIK_CHART_VERSION}" --namespace kube-system \
-  --set service.type=ClusterIP --wait --timeout 4m
+  --set service.type=ClusterIP
+# No `helm --wait`: it never returns for this chart on kind although the Deployment is Ready, so wait on the rollout.
+kubectl -n kube-system rollout status deployment/traefik --timeout=180s
 kubectl apply -f "${K8S}/l3-ingress-storage-rbac/ingress-traefik-host-path-tls-rules.yaml"
 
 kubectl -n kube-system port-forward deployment/traefik 8443:8443 >/dev/null 2>&1 &
