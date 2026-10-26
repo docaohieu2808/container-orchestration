@@ -1,0 +1,75 @@
+# L-MAX: the webhook server itself — Deployment + the Service the WebhookConfigurations point at.
+# The API server calls https://webapp-webhook-service.demo.svc:443, which forwards to the Pod on 8443.
+# The Pod mounts the webhook-tls Secret (tls.crt/tls.key) created by gen-webhook-certs.sh.
+# Image: build it from this directory (`docker build -t webapp-webhook:dev .`) and load it into the
+# cluster (`kind load docker-image webapp-webhook:dev`), or push it to a registry and change image below.
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: webapp-webhook
+  namespace: demo
+  labels:
+    app: webapp-webhook
+spec:
+  replicas: 2   # failurePolicy is Fail, so keep more than one copy to survive a node drain
+  selector:
+    matchLabels:
+      app: webapp-webhook
+  template:
+    metadata:
+      labels:
+        app: webapp-webhook
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: webhook
+          image: webapp-webhook:dev
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8443
+              name: https
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: https
+              scheme: HTTPS
+            periodSeconds: 5
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          resources:
+            requests:
+              cpu: "20m"
+              memory: "32Mi"
+            limits:
+              cpu: "200m"
+              memory: "64Mi"
+          volumeMounts:
+            - name: certs
+              mountPath: /etc/webhook/certs
+              readOnly: true
+      volumes:
+        - name: certs
+          secret:
+            secretName: webhook-tls
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: webapp-webhook-service
+  namespace: demo
+  labels:
+    app: webapp-webhook
+spec:
+  selector:
+    app: webapp-webhook
+  ports:
+    - name: https
+      port: 443
+      targetPort: https

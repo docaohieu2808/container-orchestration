@@ -19,8 +19,14 @@ metadata:
 rules:
   # Watch and manage WebApp custom resources
   - apiGroups: ["apps.example.com"]
-    resources: ["webapps", "webapps/status"]
-    verbs: ["get", "list", "watch", "update", "patch"]
+    resources: ["webapps"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["apps.example.com"]
+    resources: ["webapps/status"]
+    verbs: ["get", "update", "patch"]
+  - apiGroups: ["apps.example.com"]
+    resources: ["webapps/finalizers"]   # needed for blockOwnerDeletion on the child objects' OwnerReference
+    verbs: ["update"]
   # Manage child Deployments and Services
   - apiGroups: ["apps"]
     resources: ["deployments"]
@@ -28,10 +34,11 @@ rules:
   - apiGroups: [""]
     resources: ["services"]
     verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
-  # Read events for debugging
-  - apiGroups: [""]
-    resources: ["events"]
-    verbs: ["create", "patch"]
+  # Leader election (--leader-elect=true) stores its lock in a Lease; without this rule the
+  # manager never becomes leader and reconciles nothing.
+  - apiGroups: ["coordination.k8s.io"]
+    resources: ["leases"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
@@ -65,13 +72,36 @@ spec:
         app: webapp-operator
     spec:
       serviceAccountName: webapp-operator-sa
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
       containers:
         - name: operator
-          image: example/webapp-operator:latest   # Built from l5-custom-controller Go code
+          # Built from the l5-custom-controller code: `make docker-build` there, then load it into
+          # the cluster (`kind load docker-image webapp-operator:dev`) or push it and change this line.
+          image: webapp-operator:dev
+          imagePullPolicy: IfNotPresent
           command: ["/manager"]
           args:
             - "--leader-elect=true"    # Enable leader election for HA deployments
-            - "--namespace=demo"
+            - "--namespace=demo"       # Watch only this namespace (empty = all namespaces)
+          ports:
+            - name: health
+              containerPort: 8081
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: health
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: health
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
           resources:
             requests:
               cpu: "50m"
@@ -79,8 +109,3 @@ spec:
             limits:
               cpu: "200m"
               memory: "256Mi"
-          env:
-            - name: WATCH_NAMESPACE
-              valueFrom:
-                fieldRef:
-                  fieldPath: metadata.namespace

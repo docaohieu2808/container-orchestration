@@ -1,36 +1,49 @@
 // L-MAX: Admission Webhook Server — Validate and Mutate Handlers
 // This HTTPS server handles AdmissionReview requests from the Kubernetes API server.
 // Two endpoints:
-//   /mutate-apps-example-com-v1alpha1-webapp  — sets default resource limits if omitted
-//   /validate-apps-example-com-v1alpha1-webapp — rejects images tagged :latest
 //
-// TLS is REQUIRED. The API server verifies the webhook cert against caBundle in the
-// WebhookConfiguration. Use cert-manager or generate certs with:
-//   openssl req -x509 -newkey rsa:4096 -keyout tls.key -out tls.crt -days 365 -nodes \
-//     -subj "/CN=webapp-webhook-service.demo.svc"
+//	/mutate-apps-example-com-v1alpha1-webapp   — adds the managed-by label if it is missing
+//	/validate-apps-example-com-v1alpha1-webapp — rejects images without an explicit tag (or tagged :latest)
 //
-// Build: go build -o webhook-server ./...
-// Deploy: docker build + push, create a Service named webapp-webhook-service in namespace demo
+// Request order in the API server: defaulting (CRD defaults) -> mutating webhooks -> schema
+// validation -> validating webhooks. That is why validation here does not repeat what the CRD schema
+// already enforces (replicas range, required fields).
+//
+// TLS is REQUIRED, and the serving certificate must carry the Service DNS name in its SAN list
+// (Go rejects CN-only certificates). gen-webhook-certs.sh in this directory creates a CA and a
+// correct certificate, stores them in the webhook-tls Secret, and fills in caBundle.
+//
+// Build: go build -o webhook-server .
 package main
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"net/http"
 	"strings"
+	"time"
 
 	admissionv1 "k8s.io/api/admission/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/types"
 )
 
 const (
 	tlsCertFile = "/etc/webhook/certs/tls.crt" // Mounted from a Secret (type: kubernetes.io/tls)
 	tlsKeyFile  = "/etc/webhook/certs/tls.key"
+
+	managedByLabel = "app.kubernetes.io/managed-by"
+	managedByValue = "webapp-operator"
+	maxBodyBytes   = 1 << 20 // an AdmissionReview for a WebApp is tiny; cap what we read
 )
 
-// WebApp is a minimal struct matching the CRD spec for JSON unmarshalling.
+// WebApp is a minimal struct matching the CRD for JSON unmarshalling.
 type WebApp struct {
+	Metadata struct {
+		Labels map[string]string `json:"labels"`
+	} `json:"metadata"`
 	Spec struct {
 		Image    string `json:"image"`
 		Replicas int    `json:"replicas"`
@@ -39,16 +52,10 @@ type WebApp struct {
 }
 
 func main() {
-	mux := http.NewServeMux()
-	mux.HandleFunc("/mutate-apps-example-com-v1alpha1-webapp", mutateHandler)
-	mux.HandleFunc("/validate-apps-example-com-v1alpha1-webapp", validateHandler)
-	mux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) {
-		w.WriteHeader(http.StatusOK)
-	})
-
 	server := &http.Server{
-		Addr:    ":8443",
-		Handler: mux,
+		Addr:              ":8443",
+		Handler:           newMux(),
+		ReadHeaderTimeout: 10 * time.Second,
 	}
 
 	log.Println("Starting webhook server on :8443 (TLS)")
@@ -57,88 +64,97 @@ func main() {
 	}
 }
 
-// mutateHandler sets default port to 80 if not specified (MutatingAdmissionWebhook).
+func newMux() *http.ServeMux {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/mutate-apps-example-com-v1alpha1-webapp", mutateHandler)
+	mux.HandleFunc("/validate-apps-example-com-v1alpha1-webapp", validateHandler)
+	mux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})
+	return mux
+}
+
+// jsonPatchOp is one RFC 6902 operation.
+type jsonPatchOp struct {
+	Op    string      `json:"op"`
+	Path  string      `json:"path"`
+	Value interface{} `json:"value,omitempty"`
+}
+
+// mutateHandler labels every WebApp with the controller that manages it (MutatingAdmissionWebhook).
 func mutateHandler(w http.ResponseWriter, r *http.Request) {
-	review, err := decodeAdmissionReview(r)
+	review, webapp, err := decode(w, r)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 
-	var webapp WebApp
-	if err := json.Unmarshal(review.Request.Object.Raw, &webapp); err != nil {
-		writeResponse(w, review.Request.UID, false, "failed to parse WebApp", nil)
-		return
-	}
-
-	var patches []map[string]interface{}
-
-	// Mutation 1: set default port to 80 if omitted or zero
-	if webapp.Spec.Port == 0 {
-		patches = append(patches, map[string]interface{}{
-			"op":    "add",
-			"path":  "/spec/port",
-			"value": 80,
-		})
-	}
-
-	// Mutation 2: set default replicas to 1 if omitted or zero
-	if webapp.Spec.Replicas == 0 {
-		patches = append(patches, map[string]interface{}{
-			"op":    "add",
-			"path":  "/spec/replicas",
-			"value": 1,
-		})
+	var patches []jsonPatchOp
+	if webapp.Metadata.Labels == nil {
+		// No labels map at all: the whole map must be added, a deeper path would not exist yet.
+		patches = append(patches, jsonPatchOp{Op: "add", Path: "/metadata/labels", Value: map[string]string{managedByLabel: managedByValue}})
+	} else if _, ok := webapp.Metadata.Labels[managedByLabel]; !ok {
+		patches = append(patches, jsonPatchOp{Op: "add", Path: "/metadata/labels/" + escapeJSONPointer(managedByLabel), Value: managedByValue})
 	}
 
 	var patchBytes []byte
 	if len(patches) > 0 {
-		patchBytes, _ = json.Marshal(patches)
+		patchBytes, err = json.Marshal(patches)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
 	}
-
 	writeResponse(w, review.Request.UID, true, "mutated defaults", patchBytes)
 }
 
-// validateHandler rejects WebApp objects that use the :latest image tag (ValidatingAdmissionWebhook).
+// validateHandler rejects WebApp objects that use an untagged or :latest image (ValidatingAdmissionWebhook).
 func validateHandler(w http.ResponseWriter, r *http.Request) {
-	review, err := decodeAdmissionReview(r)
+	review, webapp, err := decode(w, r)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 
-	var webapp WebApp
-	if err := json.Unmarshal(review.Request.Object.Raw, &webapp); err != nil {
-		writeResponse(w, review.Request.UID, false, "failed to parse WebApp", nil)
-		return
-	}
-
-	// Validation rule: reject images tagged :latest (non-deterministic deployments)
-	if strings.HasSuffix(webapp.Spec.Image, ":latest") || !strings.Contains(webapp.Spec.Image, ":") {
+	if !hasExplicitTag(webapp.Spec.Image) {
 		writeResponse(w, review.Request.UID, false,
-			fmt.Sprintf("image %q must have an explicit version tag (not :latest)", webapp.Spec.Image), nil)
+			fmt.Sprintf("image %q must have an explicit version tag or digest (not :latest)", webapp.Spec.Image), nil)
 		return
 	}
-
-	// Validation rule: replicas must be >= 1
-	if webapp.Spec.Replicas < 1 {
-		writeResponse(w, review.Request.UID, false, "spec.replicas must be >= 1", nil)
-		return
-	}
-
 	writeResponse(w, review.Request.UID, true, "validation passed", nil)
 }
 
-// decodeAdmissionReview parses the AdmissionReview from the request body.
-func decodeAdmissionReview(r *http.Request) (*admissionv1.AdmissionReview, error) {
+// hasExplicitTag reports whether an image reference pins a version: a digest, or a tag other than
+// "latest". Only the last path segment is inspected, so "registry:5000/app" (a registry port, no tag)
+// is correctly seen as untagged.
+func hasExplicitTag(image string) bool {
+	if strings.Contains(image, "@sha256:") {
+		return true
+	}
+	last := image[strings.LastIndex(image, "/")+1:]
+	i := strings.LastIndex(last, ":")
+	return i >= 0 && last[i+1:] != "" && last[i+1:] != "latest"
+}
+
+// escapeJSONPointer escapes a key for use inside a JSON pointer (RFC 6901): "~" -> "~0", "/" -> "~1".
+func escapeJSONPointer(s string) string {
+	return strings.NewReplacer("~", "~0", "/", "~1").Replace(s)
+}
+
+// decode parses the AdmissionReview from the request body and the WebApp object inside it.
+func decode(w http.ResponseWriter, r *http.Request) (*admissionv1.AdmissionReview, *WebApp, error) {
 	var review admissionv1.AdmissionReview
-	if err := json.NewDecoder(r.Body).Decode(&review); err != nil {
-		return nil, fmt.Errorf("failed to decode AdmissionReview: %w", err)
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxBodyBytes)).Decode(&review); err != nil {
+		return nil, nil, fmt.Errorf("failed to decode AdmissionReview: %w", err)
 	}
 	if review.Request == nil {
-		return nil, fmt.Errorf("AdmissionReview.Request is nil")
+		return nil, nil, errors.New("AdmissionReview.Request is nil")
 	}
-	return &review, nil
+	var webapp WebApp
+	if err := json.Unmarshal(review.Request.Object.Raw, &webapp); err != nil {
+		return nil, nil, fmt.Errorf("failed to parse WebApp: %w", err)
+	}
+	return &review, &webapp, nil
 }
 
 // writeResponse writes an AdmissionReview response with optional JSON patch.
