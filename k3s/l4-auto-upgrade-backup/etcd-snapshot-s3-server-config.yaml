@@ -1,0 +1,35 @@
+# L4: K3s — etcd snapshots to S3, the built-in way
+# K3s takes etcd snapshots itself (embedded etcd only: servers started with --cluster-init, as in l3) and
+# can upload them to S3-compatible storage. No CronJob is needed: a pod cannot run `k3s etcd-snapshot`
+# on the host anyway, and the previous CronJob here only copied an existing file and never took a snapshot.
+#
+# Install: put this file at /etc/rancher/k3s/config.yaml.d/etcd-snapshot.yaml on EVERY server node
+# (or merge the keys into /etc/rancher/k3s/config.yaml), then `systemctl restart k3s`.
+# Keys are the CLI flags without the leading dashes.
+#
+# Take a snapshot now:   sudo k3s etcd-snapshot save --name before-upgrade
+# List local + S3:       sudo k3s etcd-snapshot ls
+# Restore (stop k3s on all servers first, see https://docs.k3s.io/datastore/backup-restore):
+#   sudo k3s server --cluster-reset --cluster-reset-restore-path=<snapshot-name>
+
+# Scheduled snapshots (default is 0 */12 * * *, keeping 5 per node)
+etcd-snapshot-schedule-cron: "0 */6 * * *"
+etcd-snapshot-retention: 10           # local snapshots kept per server node
+etcd-snapshot-compress: true
+
+# Offsite copy. Every placeholder in <angle brackets> must be replaced; keep real keys out of git:
+# store them in an unversioned file, or use etcd-s3-config-secret (below) instead of the inline keys.
+etcd-s3: true
+etcd-s3-endpoint: "s3.<region>.amazonaws.com"     # or the endpoint of MinIO / R2 / any S3-compatible service
+etcd-s3-region: "<region>"
+etcd-s3-bucket: "<bucket-name>"
+etcd-s3-folder: "k3s-etcd"
+etcd-s3-retention: 30                 # cluster-wide count in the bucket: roughly servers x cycles kept
+etcd-s3-access-key: "<access-key-id>"
+etcd-s3-secret-key: "<secret-access-key>"
+
+# Alternative that keeps credentials out of the file: create a Secret of type
+# etcd.k3s.cattle.io/s3-config-secret in kube-system (keys etcd-s3-endpoint, etcd-s3-bucket,
+# etcd-s3-access-key, ...) and set only:
+#   etcd-s3: true
+#   etcd-s3-config-secret: <secret-name>

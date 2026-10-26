@@ -1,9 +1,11 @@
 # L2: K3s — Traefik IngressRoute with TLS and Middleware
-# K3s ships Traefik v2 as the default ingress controller.
+# K3s ships Traefik v3 as the default ingress controller.
 # Traefik provides its own CRDs (IngressRoute, Middleware, TLSOption) that are
 # more powerful than the standard Ingress resource.
 # IngressRoute replaces nginx Ingress annotations with explicit CRD-based routing.
 #
+# Backend: the Service of the podinfo release from helm-install-app-chart-with-values-override.sh
+# (release my-app -> Service my-app-podinfo:9898 in namespace demo). Install that first.
 # Apply: kubectl apply -f traefik-ingressroute-host-tls-middleware.yaml
 ---
 # Middleware: redirect HTTP to HTTPS
@@ -32,7 +34,7 @@ spec:
 apiVersion: traefik.io/v1alpha1
 kind: IngressRoute
 metadata:
-  name: nginx-ingressroute-tls
+  name: podinfo-ingressroute-tls
   namespace: demo
 spec:
   entryPoints:
@@ -41,24 +43,25 @@ spec:
     - match: Host(`demo.example.com`) && PathPrefix(`/`)
       kind: Rule
       services:
-        - name: nginx-clusterip
-          port: 80
+        - name: my-app-podinfo
+          port: 9898
     - match: Host(`demo.example.com`) && PathPrefix(`/api`)
       kind: Rule
       middlewares:
-        - name: strip-api-prefix
+        - name: strip-api-prefix    # /api/version is forwarded as /version
       services:
-        - name: api-service
-          port: 8080
+        - name: my-app-podinfo
+          port: 9898
   tls:
-    secretName: demo-tls-secret    # kubernetes.io/tls Secret with tls.crt and tls.key
+    secretName: demo-tls-secret    # kubernetes.io/tls Secret with tls.crt and tls.key; if it does not
+                                   # exist Traefik serves its built-in default certificate instead
     # To use cert-manager: annotate with cert-manager.io/cluster-issuer: letsencrypt-prod
 ---
 # IngressRoute: HTTP -> HTTPS redirect
 apiVersion: traefik.io/v1alpha1
 kind: IngressRoute
 metadata:
-  name: nginx-ingressroute-http-redirect
+  name: podinfo-ingressroute-http-redirect
   namespace: demo
 spec:
   entryPoints:
@@ -69,5 +72,5 @@ spec:
       middlewares:
         - name: redirect-https
       services:
-        - name: nginx-clusterip
-          port: 80
+        - name: my-app-podinfo
+          port: 9898

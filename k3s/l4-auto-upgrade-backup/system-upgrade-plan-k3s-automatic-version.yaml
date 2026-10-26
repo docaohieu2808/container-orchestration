@@ -1,12 +1,18 @@
 # L4: K3s — System Upgrade Controller Plan (Automatic K3s Version Upgrades)
-# The System Upgrade Controller (SUC) watches Plan CRs and upgrades K3s nodes
-# automatically by running an upgrade job on each matching node.
-# Install SUC first: kubectl apply -f https://github.com/rancher/system-upgrade-controller/releases/latest/download/system-upgrade-controller.yaml
+# The System Upgrade Controller (SUC) watches Plan CRs and upgrades K3s nodes automatically by running
+# an upgrade Job on each matching node.
+#
+# Install SUC first (CRDs, then the controller; the release is pinned, bump it deliberately):
+#   kubectl apply -f https://github.com/rancher/system-upgrade-controller/releases/download/v0.20.2/crd.yaml
+#   kubectl apply -f https://github.com/rancher/system-upgrade-controller/releases/download/v0.20.2/system-upgrade-controller.yaml
+# The controller lives in the system-upgrade namespace and watches Plans in that same namespace.
 #
 # How it works:
-#   1. SUC watches for Plan objects in the cattle-system namespace
-#   2. When a new K3s version matches the channel, SUC drains + upgrades each node
-#   3. Server nodes are upgraded before agent nodes (controlled by label selector)
+#   1. SUC resolves the wanted version (a pinned `version:` or the `channel:` URL, polled periodically).
+#   2. For each node matching nodeSelector it cordons the node (cordon: true) and runs the upgrade Job.
+#   3. The agent plan's `prepare` step makes its Jobs wait until the server plan has completed, so
+#      control-plane nodes are always upgraded first. Only the agent plan has a prepare step: giving the
+#      server plan one that waits for the agent plan would make the two wait for each other forever.
 ---
 # Plan for server (control-plane) nodes
 apiVersion: upgrade.cattle.io/v1
@@ -17,34 +23,21 @@ metadata:
   labels:
     k3s-upgrade: server
 spec:
-  # Track the stable channel — upgrades to latest stable K3s automatically
+  concurrency: 1               # Upgrade one server at a time (preserves etcd quorum in HA)
+  cordon: true                 # Stop scheduling onto the node while it upgrades
+  serviceAccountName: system-upgrade
+  # Follow the stable channel: upgrades to the latest stable K3s automatically.
+  # To pin instead, drop `channel` and set:  version: v1.36.5+k3s1
   channel: https://update.k3s.io/v1-release/channels/stable
-  # Alternatively, pin to a specific version:
-  # version: v1.28.5+k3s1
-
   upgrade:
     image: rancher/k3s-upgrade    # Official K3s upgrade image
-
-  # Drain node before upgrade (graceful workload eviction)
-  drain:
-    force: false
-    skipWaitForDeleteTimeout: 60    # Seconds to wait for pods to terminate
-
-  # Only upgrade nodes labeled as server nodes
   nodeSelector:
     matchExpressions:
       - key: node-role.kubernetes.io/control-plane
         operator: In
         values: ["true"]
-
-  # Require SUC itself to be up-to-date before upgrading (safety check)
-  prepare:
-    image: rancher/k3s-upgrade
-    command: ["prepare", "k3s-agent-upgrade-plan"]    # Wait for agent plan to be ready
-
-  concurrency: 1    # Upgrade one server at a time (preserves etcd quorum in HA)
 ---
-# Plan for agent (worker) nodes — runs after server upgrade
+# Plan for agent (worker) nodes — runs after the server plan has finished
 apiVersion: upgrade.cattle.io/v1
 kind: Plan
 metadata:
@@ -53,18 +46,17 @@ metadata:
   labels:
     k3s-upgrade: agent
 spec:
+  concurrency: 2               # Upgrade 2 agent nodes at a time
+  cordon: true
+  serviceAccountName: system-upgrade
   channel: https://update.k3s.io/v1-release/channels/stable
-  upgrade:
-    image: rancher/k3s-upgrade
-  drain:
-    force: false
-    skipWaitForDeleteTimeout: 60
   nodeSelector:
     matchExpressions:
       - key: node-role.kubernetes.io/control-plane
         operator: DoesNotExist    # Only agent/worker nodes
-  # Only proceed after server nodes are upgraded
+  # Wait for the server plan: the prepare image blocks until that plan has completed.
   prepare:
     image: rancher/k3s-upgrade
-    command: ["prepare", "k3s-server-upgrade-plan"]
-  concurrency: 2    # Upgrade 2 agent nodes simultaneously for speed
+    args: ["prepare", "k3s-server-upgrade-plan"]
+  upgrade:
+    image: rancher/k3s-upgrade

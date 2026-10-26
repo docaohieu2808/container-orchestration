@@ -1,0 +1,18 @@
+# Values override for the podinfo chart (helm-install-app-chart-with-values-override.sh).
+# Anything not set here keeps the chart default; `helm show values <chart>` lists every key.
+replicaCount: 1   # overridden to 2 on the command line with --set (command line wins over this file)
+
+ui:
+  message: "Hello from the container-orchestration k3s l2 lab"
+
+resources:
+  requests:
+    cpu: 50m
+    memory: 64Mi
+  limits:
+    cpu: 200m
+    memory: 256Mi
+
+# The route into the cluster is the Traefik IngressRoute below, so the chart's own Ingress stays off.
+ingress:
+  enabled: false
