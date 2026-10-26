@@ -8,7 +8,7 @@ GitHub-hosted runner is run for real by CI on every push and once a week (kind, 
 everything else is validated statically, so the files here are known to apply and work on current releases.
 
 Versions verified on 2026-10-26: Kubernetes 1.37, k3s v1.36.5 (stable channel), Helm 4.3.1, Nomad 2.0.7,
-controller-runtime 0.25, Go 1.26+, nginx 1.30.
+controller-runtime 0.25, Go 1.27, nginx 1.30.
 
 ## Level map
 
