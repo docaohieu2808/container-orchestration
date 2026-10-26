@@ -1,12 +1,18 @@
 # L3: Nomad — Service Mesh with Consul Connect (mTLS Sidecar Proxy)
 # Consul Connect provides service mesh capabilities via Envoy sidecar proxies.
-# All traffic between services is encrypted with mTLS — no code changes required.
+# Traffic between services is encrypted with mTLS — no code changes required.
 # Nomad + Consul integration: Nomad manages Envoy sidecars as native sidecar tasks.
 #
-# Prerequisites:
-#   - Consul agent running on every Nomad client node
-#   - Consul Connect enabled: connect { enabled = true } in Consul agent config
-#   - Envoy binary available or CNI plugins for transparent proxy
+# This job needs a real Nomad + Consul cluster, so CI validates it (`nomad job validate`) but does not
+# run it. `myapp:1.2.3` is a placeholder for your own image. Prerequisites on every Nomad client:
+#   - A Consul agent reachable by Nomad, with Connect enabled (`connect { enabled = true }` on the
+#     Consul servers) and Nomad's `consul` block configured (Nomad 1.10+/2.x authenticates to Consul
+#     with workload identity: a Consul JWT auth method trusting Nomad)
+#   - CNI reference plugins installed (/opt/cni/bin) and the bridge/iptables kernel modules:
+#     required by `network { mode = "bridge" }`
+#   - Docker, to pull and run the Envoy sidecar image
+# The Postgres password is read from a Nomad variable, create it first:
+#   nomad var put nomad/jobs/service-mesh-webapp postgres_password="$(openssl rand -hex 16)"
 #
 # Apply: nomad job run service-mesh-webapp-consul-connect-sidecar.nomad.hcl
 
@@ -31,8 +37,10 @@ job "service-mesh-webapp" {
       # Connect block enables the Envoy sidecar proxy
       connect {
         sidecar_service {
-          # Upstream services this webapp needs to reach
-          # Traffic to localhost:5432 is transparently proxied through Envoy to "postgres" service
+          # Upstream services this webapp needs to reach. Each upstream opens a local listener
+          # (local_bind_port) on 127.0.0.1 inside the group's network namespace; Envoy forwards the
+          # connection over mTLS to the destination service. (This is explicit upstream proxying,
+          # not Consul's transparent proxy mode.)
           proxy {
             upstreams {
               destination_name = "postgres-db"
@@ -117,19 +125,68 @@ job "service-mesh-webapp" {
       driver = "docker"
 
       config {
-        image = "postgres:16-alpine"
+        image = "postgres:18-alpine"
         ports = ["db"]
       }
 
+      # Password from a Nomad variable (see the prerequisites above), not from the job file.
+      # Tasks can read variables under nomad/jobs/<job-name> without an ACL policy.
+      template {
+        destination = "secrets/postgres.env"
+        env         = true
+        data        = <<EOF
+POSTGRES_PASSWORD={{ with nomadVar "nomad/jobs/service-mesh-webapp" }}{{ .postgres_password }}{{ end }}
+EOF
+      }
+
       env {
-        POSTGRES_DB       = "appdb"
-        POSTGRES_USER     = "appuser"
-        POSTGRES_PASSWORD = "changeme"    # Use Vault template in production
+        POSTGRES_DB   = "appdb"
+        POSTGRES_USER = "appuser"
       }
 
       resources {
         cpu    = 300
         memory = 512
+      }
+    }
+  }
+
+  # Redis cache: the webapp's second upstream. Same pattern as postgres, no secrets.
+  group "redis" {
+    count = 1
+
+    network {
+      mode = "bridge"
+      port "cache" { to = 6379 }
+    }
+
+    service {
+      name     = "redis-cache"
+      port     = "6379"
+      provider = "consul"
+
+      connect {
+        sidecar_service {}
+      }
+
+      check {
+        type     = "tcp"
+        interval = "10s"
+        timeout  = "2s"
+      }
+    }
+
+    task "redis" {
+      driver = "docker"
+
+      config {
+        image = "redis:8-alpine"
+        ports = ["cache"]
+      }
+
+      resources {
+        cpu    = 100
+        memory = 128
       }
     }
   }

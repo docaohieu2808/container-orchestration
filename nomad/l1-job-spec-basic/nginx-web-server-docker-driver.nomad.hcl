@@ -4,26 +4,29 @@
 # The Docker task driver pulls and runs container images via the Docker daemon.
 # Nomad handles scheduling, health checking, and restart policies.
 #
-# Apply: nomad job run nginx-web-server-docker-driver.nomad.hcl
-# Status: nomad job status nginx-web
-# Logs:   nomad alloc logs <alloc-id>
+# Try it with no cluster at all (needs Docker and the nomad binary):
+#   sudo nomad agent -dev                       # one-node server+client on 127.0.0.1:4646
+#   nomad job run nginx-web-server-docker-driver.nomad.hcl
+#   nomad job status nginx-web
+#   nomad service info nginx-web                # address:port of each allocation
+#   nomad alloc logs <alloc-id>
 
 job "nginx-web" {
-  # Datacenter where this job can be placed (must match agent config)
+  # Datacenter where this job can be placed (must match agent config; -dev uses dc1)
   datacenters = ["dc1"]
 
   # Job type: service (long-running), batch (finite), system (every node), sysbatch
   type = "service"
 
-  # Namespace for multi-tenant isolation (Nomad Enterprise or OSS 1.0+)
+  # Namespace for multi-tenant isolation (the "default" namespace always exists)
   namespace = "default"
 
   # Update policy: rolling update with canary support
   update {
-    max_parallel      = 1       # Update 1 allocation at a time
-    min_healthy_time  = "10s"   # Allocation must be healthy for 10s before proceeding
-    healthy_deadline  = "3m"    # Fail update if not healthy within 3 minutes
-    auto_revert       = true    # Revert to previous version if update fails
+    max_parallel     = 1       # Update 1 allocation at a time
+    min_healthy_time = "10s"   # Allocation must be healthy for 10s before proceeding
+    healthy_deadline = "3m"    # Fail update if not healthy within 3 minutes
+    auto_revert      = true    # Revert to previous version if update fails
   }
 
   group "web" {
@@ -33,20 +36,21 @@ job "nginx-web" {
     # Network configuration for the group
     network {
       port "http" {
-        static = 8080   # Bind to static port 8080 on the host
-        # to = 80       # Map host port to container port 80 (use with dynamic ports)
+        to = 80   # Dynamic host port -> container port 80. Two allocations can share one
+                  # host because each gets its own host port (a `static` port could not).
       }
     }
 
-    # Health check via Consul service registration
+    # Health-checked service registration in Nomad's built-in service discovery.
+    # Use provider = "consul" instead when a Consul agent is available (see l3).
     service {
       name     = "nginx-web"
       port     = "http"
-      provider = "consul"   # Use "nomad" if Consul is not installed
+      provider = "nomad"
 
       check {
         type     = "http"
-        path     = "/"
+        path     = "/health"
         interval = "10s"
         timeout  = "2s"
       }
@@ -65,21 +69,21 @@ job "nginx-web" {
       driver = "docker"
 
       config {
-        image = "nginx:1.25-alpine"
+        image = "nginx:1.30.6-alpine"
         ports = ["http"]      # Expose the "http" port defined in network block
 
-        # Mount a custom config file into the container
+        # Mount the rendered config file into the container (relative paths resolve in the task dir)
         volumes = [
           "local/nginx.conf:/etc/nginx/conf.d/default.conf"
         ]
       }
 
-      # Inline file rendered by Nomad template engine (Go templates + Consul KV)
+      # Inline file rendered by the Nomad template engine (Go templates; can also read Nomad variables, Consul KV, Vault)
       template {
         destination = "local/nginx.conf"
         data        = <<EOF
 server {
-    listen {{ env "NOMAD_PORT_http" }};  # Use dynamic Nomad-assigned port
+    listen 80;           # matches `to = 80` in the network block
     server_name _;
 
     location / {
@@ -88,8 +92,8 @@ server {
     }
 
     location /health {
+        default_type text/plain;
         return 200 "OK\n";
-        add_header Content-Type text/plain;
     }
 }
 EOF

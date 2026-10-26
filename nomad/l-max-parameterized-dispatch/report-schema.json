@@ -1,0 +1,6 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "report input",
+  "description": "Schema the report job downloads as an artifact; the payload is not validated against it in this lab.",
+  "type": "object"
+}

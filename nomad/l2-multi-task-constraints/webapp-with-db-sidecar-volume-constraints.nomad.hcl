@@ -1,17 +1,25 @@
-# L2: Nomad — Multi-Task Group with Sidecar, Constraints, and Volumes
+# L2: Nomad — Multi-Task Group with Sidecar, Constraints, Volumes and Vault
 # A group can contain multiple tasks that co-locate on the same Nomad client node.
 # Tasks in a group share network namespace and can communicate via localhost.
 # Constraints restrict placement to nodes matching hardware/metadata requirements.
-# CSI volumes or host volumes provide persistent storage for stateful tasks.
+# Host volumes provide persistent storage for stateful tasks.
 #
-# Pattern: webapp (main) + log-shipper (sidecar) in same allocation
+# Pattern: webapp (main) + log-shipper (sidecar) in same allocation, database credentials from Vault.
+#
+# This job needs infrastructure a laptop does not have, so CI validates it (`nomad job validate`)
+# but does not run it. `myapp:1.2.3` is a placeholder for your own image. To run it you need:
+#   - client nodes with `node_class = "worker"` and a host volume named app-data-vol (client config)
+#   - Vault with the database secrets engine (a `webapp` role) and Nomad's Vault integration using
+#     workload identity: a `vault` block in the server/client agent config, Vault's JWT auth method
+#     trusting Nomad's JWKS endpoint, and a role named below. The old token-based flow
+#     (`vault { policies = [...] }` in the job) was removed in Nomad 1.10.
 
 job "webapp-with-db-sidecar" {
   datacenters = ["dc1"]
   type        = "service"
   namespace   = "default"
 
-  # Constraint: only schedule on nodes with linux kernel (amd64)
+  # Constraint: only schedule on Linux clients
   constraint {
     attribute = "${attr.kernel.name}"
     value     = "linux"
@@ -42,20 +50,19 @@ job "webapp-with-db-sidecar" {
 
     network {
       port "http" { to = 8080 }      # Dynamic host port -> container port 8080
-      port "metrics" { to = 9090 }   # Prometheus metrics sidecar
     }
 
-    # Host volume for persistent app data (configured in Nomad agent config)
+    # Host volume for persistent app data (configured in the Nomad client config)
     volume "app-data" {
       type      = "host"
       read_only = false
-      source    = "app-data-vol"    # Must match volume name in agent config
+      source    = "app-data-vol"    # Must match volume name in client config
     }
 
     service {
       name     = "webapp"
       port     = "http"
-      provider = "consul"
+      provider = "nomad"
       tags     = ["urlprefix-/webapp"]    # Fabio/Traefik routing tag
 
       check {
@@ -81,7 +88,14 @@ job "webapp-with-db-sidecar" {
         read_only   = false
       }
 
-      # Render DB credentials from Vault (Nomad + Vault integration)
+      # Vault access through workload identity: Nomad signs a JWT for this task, Vault's JWT auth
+      # method exchanges it for a token carrying the policies bound to `role`. No static token.
+      vault {
+        role        = "webapp-db"    # Vault JWT-auth role (it holds the policies, e.g. webapp-db-policy)
+        change_mode = "restart"      # Restart the task when the rendered secret changes
+      }
+
+      # Render DB credentials from Vault's database secrets engine
       template {
         destination = "secrets/db.env"
         env         = true            # Inject rendered vars as environment variables
@@ -98,14 +112,9 @@ EOF
         memory = 256
       }
 
-      # Vault policy for dynamic secret injection
-      vault {
-        policies = ["webapp-db-policy"]
-      }
-
       env {
         APP_ENV  = "production"
-        APP_PORT = "${NOMAD_PORT_http}"
+        APP_PORT = "8080"
       }
     }
 
@@ -120,8 +129,14 @@ EOF
       }
 
       config {
-        image = "fluent/fluent-bit:2.2"
+        image = "fluent/fluent-bit:5.1.5"
         args  = ["-c", "/fluent-bit/etc/fluent-bit.conf"]
+
+        # The template below renders into the task dir; mount it where Fluent Bit looks for its config,
+        # otherwise the image's default configuration is used and the rendered file is ignored.
+        volumes = [
+          "local/fluent-bit.conf:/fluent-bit/etc/fluent-bit.conf"
+        ]
       }
 
       template {
