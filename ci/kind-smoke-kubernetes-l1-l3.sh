@@ -14,6 +14,9 @@ dump() {
   echo "::group::cluster state"
   kubectl get all,cm,secret,pvc,ingress,networkpolicy,hpa -n "${NS}" -o wide || true
   kubectl describe pods -n "${NS}" || true
+  kubectl get pods -n kube-system -o wide || true
+  kubectl describe pods -n kube-system -l app.kubernetes.io/name=traefik || true
+  kubectl logs -n kube-system -l app.kubernetes.io/name=traefik --tail=50 || true
   echo "::endgroup::"
 }
 pf_pid=""
