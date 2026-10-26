@@ -24,14 +24,14 @@ job "service-mesh-webapp" {
     count = 2
 
     network {
-      mode = "bridge"    # Required for Consul Connect — uses CNI bridge networking
+      mode = "bridge" # Required for Consul Connect — uses CNI bridge networking
       port "http" { to = 8080 }
     }
 
     # Consul Connect service registration with upstream dependencies
     service {
       name     = "webapp"
-      port     = "8080"     # Port inside the bridge network
+      port     = "8080" # Port inside the bridge network
       provider = "consul"
 
       # Connect block enables the Envoy sidecar proxy
@@ -44,11 +44,11 @@ job "service-mesh-webapp" {
           proxy {
             upstreams {
               destination_name = "postgres-db"
-              local_bind_port  = 5432    # webapp connects to localhost:5432
+              local_bind_port  = 5432 # webapp connects to localhost:5432
             }
             upstreams {
               destination_name = "redis-cache"
-              local_bind_port  = 6379    # webapp connects to localhost:6379
+              local_bind_port  = 6379 # webapp connects to localhost:6379
             }
           }
         }
@@ -68,7 +68,7 @@ job "service-mesh-webapp" {
         path     = "/health"
         interval = "10s"
         timeout  = "2s"
-        expose   = true    # Expose health check via Envoy (needed in bridge mode)
+        expose   = true # Expose health check via Envoy (needed in bridge mode)
       }
     }
 
@@ -111,14 +111,10 @@ job "service-mesh-webapp" {
       provider = "consul"
 
       connect {
-        sidecar_service {}    # No upstreams needed — postgres doesn't call other services
+        sidecar_service {} # No upstreams needed — postgres doesn't call other services
       }
-
-      check {
-        type     = "tcp"
-        interval = "10s"
-        timeout  = "2s"
-      }
+      # No Nomad check here: tcp checks are not valid on Connect-enabled services. Consul checks the
+      # sidecar proxy itself, and the webapp's /health check (with expose = true) covers the app path.
     }
 
     task "postgres" {
@@ -168,12 +164,8 @@ EOF
       connect {
         sidecar_service {}
       }
-
-      check {
-        type     = "tcp"
-        interval = "10s"
-        timeout  = "2s"
-      }
+      # No Nomad check here: tcp checks are not valid on Connect-enabled services. Consul checks the
+      # sidecar proxy itself, and the webapp's /health check (with expose = true) covers the app path.
     }
 
     task "redis" {

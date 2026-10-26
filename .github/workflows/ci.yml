@@ -225,7 +225,8 @@ jobs:
           kubectl get nodes -o wide
           # ServiceLB is left enabled, so a LoadBalancer Service (Traefik) gets the node IP, not <pending>.
           for _ in $(seq 1 60); do
-            ip=$(kubectl -n kube-system get svc traefik -o jsonpath='{.status.loadBalancer.ingress[0].ip}')
+            # the Traefik chart is installed asynchronously by k3s's Helm controller, so the Service may not exist yet
+            ip=$(kubectl -n kube-system get svc traefik -o jsonpath='{.status.loadBalancer.ingress[0].ip}' 2>/dev/null) || ip=""
             [ -n "$ip" ] && break
             sleep 5
           done

@@ -30,7 +30,7 @@ job "batch-report-generator" {
   # parameterized block makes this a job template (not immediately scheduled)
   parameterized {
     # payload: the dispatch payload (arbitrary bytes, e.g. JSON input data)
-    payload = "optional"    # "required" | "optional" | "forbidden"
+    payload = "optional" # "required" | "optional" | "forbidden"
 
     # meta_required: dispatch must provide these metadata keys
     meta_required = ["REPORT_TYPE"]
@@ -40,12 +40,12 @@ job "batch-report-generator" {
   }
 
   group "report" {
-    count = 1    # Each dispatch creates exactly 1 allocation
+    count = 1 # Each dispatch creates exactly 1 allocation
 
     # Ephemeral disk for scratch/output files, shared by the tasks of the allocation.
     # It is a GROUP-level block (it is not valid inside a task).
     ephemeral_disk {
-      size    = 300    # MB
+      size    = 300 # MB
       sticky  = false
       migrate = false
     }
@@ -88,7 +88,7 @@ job "batch-report-generator" {
 
       # Write the dispatch payload to a file for the task to consume
       dispatch_payload {
-        file = "input/data.json"    # Written to ${NOMAD_TASK_DIR}/input/data.json
+        file = "input/data.json" # Written to ${NOMAD_TASK_DIR}/input/data.json
       }
 
       # Template: render settings from the dispatch metadata into environment variables
@@ -119,7 +119,7 @@ EOF
 
       logs {
         max_files     = 3
-        max_file_size = 10    # MB per log file
+        max_file_size = 10 # MB per log file
       }
 
       env {

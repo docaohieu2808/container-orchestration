@@ -43,7 +43,7 @@ test "$(kubectl -n "${NS}" get deploy my-webapp -o jsonpath='{.spec.replicas}')"
 test "$(kubectl -n "${NS}" get svc my-webapp -o jsonpath='{.spec.ports[0].port}')" = 8080
 test "$(kubectl -n "${NS}" get webapp my-webapp -o jsonpath='{.status.availableReplicas}')" = 3
 test "$(kubectl -n "${NS}" get deploy my-webapp -o jsonpath='{.spec.template.spec.containers[0].env[0].name}')" = APP_ENV
-kubectl -n "${NS}" get deploy my-webapp -o jsonpath='{.metadata.ownerReferences[0].kind}' | grep -qx WebApp
+test "$(kubectl -n "${NS}" get deploy my-webapp -o jsonpath='{.metadata.ownerReferences[0].kind}')" = WebApp
 
 echo "== l5: spec changes propagate (replicas, env)"
 kubectl -n "${NS}" patch webapp my-webapp --type=merge \
@@ -61,6 +61,15 @@ echo "== l-max: admission webhook"
 bash "${K8S}/l-max-admission-webhook/gen-webhook-certs.sh"
 kubectl apply -f "${K8S}/l-max-admission-webhook/webhook-deployment-and-service.yaml"
 kubectl -n "${NS}" rollout status deployment/webapp-webhook --timeout=180s
+# Deployment "available" can precede the Service routing (kube-proxy rules, EndpointSlices) by a moment;
+# a server-side dry run goes through the webhook without creating anything, so retry it until it answers.
+for _ in $(seq 1 30); do
+  if kubectl -n "${NS}" apply --dry-run=server -f "${K8S}/l4-operators-crds/cr-webapp-instance-example.yaml" >/dev/null 2>&1; then
+    break
+  fi
+  sleep 2
+done
+kubectl -n "${NS}" apply --dry-run=server -f "${K8S}/l4-operators-crds/cr-webapp-instance-example.yaml"
 
 # Validating webhook: an untagged / :latest image is refused with the webhook's message.
 if out="$(kubectl -n "${NS}" apply -f - 2>&1 <<'EOF'
@@ -76,7 +85,7 @@ EOF
   echo "bad-latest should have been rejected"; exit 1
 fi
 echo "${out}"
-echo "${out}" | grep -q "must have an explicit version tag"
+grep -q "must have an explicit version tag" <<<"${out}"
 if kubectl -n "${NS}" get webapp bad-latest >/dev/null 2>&1; then
   echo "bad-latest must not exist"; exit 1
 fi

@@ -23,10 +23,10 @@ job "nginx-web" {
 
   # Update policy: rolling update with canary support
   update {
-    max_parallel     = 1       # Update 1 allocation at a time
-    min_healthy_time = "10s"   # Allocation must be healthy for 10s before proceeding
-    healthy_deadline = "3m"    # Fail update if not healthy within 3 minutes
-    auto_revert      = true    # Revert to previous version if update fails
+    max_parallel     = 1     # Update 1 allocation at a time
+    min_healthy_time = "10s" # Allocation must be healthy for 10s before proceeding
+    healthy_deadline = "3m"  # Fail update if not healthy within 3 minutes
+    auto_revert      = true  # Revert to previous version if update fails
   }
 
   group "web" {
@@ -36,8 +36,8 @@ job "nginx-web" {
     # Network configuration for the group
     network {
       port "http" {
-        to = 80   # Dynamic host port -> container port 80. Two allocations can share one
-                  # host because each gets its own host port (a `static` port could not).
+        to = 80 # Dynamic host port -> container port 80. Two allocations can share one
+        # host because each gets its own host port (a `static` port could not).
       }
     }
 
@@ -61,7 +61,7 @@ job "nginx-web" {
       attempts = 3
       interval = "5m"
       delay    = "15s"
-      mode     = "delay"   # "delay" = wait before retry; "fail" = fail immediately
+      mode     = "delay" # "delay" = wait before retry; "fail" = fail immediately
     }
 
     task "nginx" {
@@ -70,7 +70,7 @@ job "nginx-web" {
 
       config {
         image = "nginx:1.30.6-alpine"
-        ports = ["http"]      # Expose the "http" port defined in network block
+        ports = ["http"] # Expose the "http" port defined in network block
 
         # Mount the rendered config file into the container (relative paths resolve in the task dir)
         volumes = [
@@ -101,8 +101,8 @@ EOF
 
       # Resource constraints (Nomad bin-packs tasks onto nodes)
       resources {
-        cpu    = 100   # MHz
-        memory = 128   # MB
+        cpu    = 100 # MHz
+        memory = 128 # MB
       }
 
       # Environment variables

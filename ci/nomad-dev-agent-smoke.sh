@@ -48,7 +48,8 @@ test "$(echo "${ADDRS}" | wc -l)" -eq 2
 for addr in ${ADDRS}; do
   echo "GET http://${addr}/health"
   test "$(curl -fsS "http://${addr}/health")" = OK
-  curl -fsS "http://${addr}/" | grep -q "Welcome to nginx"
+  page="$(curl -fsS "http://${addr}/")"
+  grep -q "Welcome to nginx" <<<"${page}"
 done
 nomad job stop -purge nginx-web
 
@@ -77,10 +78,10 @@ nomad job status "${CHILD}"
 
 LOGS="$(nomad alloc logs -job "${CHILD}" report-task)"
 echo "${LOGS}"
-echo "${LOGS}" | grep -q "type=daily format=csv"
-echo "${LOGS}" | grep -q "notify=ops@example.com"     # default meta applied
-echo "${LOGS}" | grep -q "wrote /alloc/data/report.csv"
-echo "${LOGS}" | grep -qF 'json-schema.org'                   # the downloaded artifact was readable
+grep -q "type=daily format=csv" <<<"${LOGS}"
+grep -q "notify=ops@example.com" <<<"${LOGS}"      # default meta applied
+grep -q "wrote /alloc/data/report.csv" <<<"${LOGS}"
+grep -qF 'json-schema.org' <<<"${LOGS}"            # the downloaded artifact was readable
 
 # Omitting the optional key falls back to the job-level default instead of an empty string.
 OUT2="$(nomad job dispatch -detach -meta REPORT_TYPE=weekly batch-report-generator "${PAYLOAD}")"
@@ -90,6 +91,7 @@ for _ in $(seq 1 60); do
   [[ "${STATUS}" == dead ]] && break
   sleep 2
 done
-nomad alloc logs -job "${CHILD2}" report-task | grep -q "type=weekly format=json"
+LOGS2="$(nomad alloc logs -job "${CHILD2}" report-task)"
+grep -q "type=weekly format=json" <<<"${LOGS2}"
 
 echo "Nomad l1 and l-max verified on a dev agent."

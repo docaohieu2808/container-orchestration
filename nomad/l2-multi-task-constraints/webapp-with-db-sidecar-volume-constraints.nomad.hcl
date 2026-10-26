@@ -36,7 +36,7 @@ job "webapp-with-db-sidecar" {
     min_healthy_time = "10s"
     healthy_deadline = "3m"
     auto_revert      = true
-    canary           = 1    # Deploy 1 canary before rolling out to all allocations
+    canary           = 1 # Deploy 1 canary before rolling out to all allocations
   }
 
   group "webapp" {
@@ -49,21 +49,21 @@ job "webapp-with-db-sidecar" {
     }
 
     network {
-      port "http" { to = 8080 }      # Dynamic host port -> container port 8080
+      port "http" { to = 8080 } # Dynamic host port -> container port 8080
     }
 
     # Host volume for persistent app data (configured in the Nomad client config)
     volume "app-data" {
       type      = "host"
       read_only = false
-      source    = "app-data-vol"    # Must match volume name in client config
+      source    = "app-data-vol" # Must match volume name in client config
     }
 
     service {
       name     = "webapp"
       port     = "http"
       provider = "nomad"
-      tags     = ["urlprefix-/webapp"]    # Fabio/Traefik routing tag
+      tags     = ["urlprefix-/webapp"] # Fabio/Traefik routing tag
 
       check {
         type     = "http"
@@ -84,21 +84,21 @@ job "webapp-with-db-sidecar" {
 
       volume_mount {
         volume      = "app-data"
-        destination = "/data"         # Mount path inside container
+        destination = "/data" # Mount path inside container
         read_only   = false
       }
 
       # Vault access through workload identity: Nomad signs a JWT for this task, Vault's JWT auth
       # method exchanges it for a token carrying the policies bound to `role`. No static token.
       vault {
-        role        = "webapp-db"    # Vault JWT-auth role (it holds the policies, e.g. webapp-db-policy)
-        change_mode = "restart"      # Restart the task when the rendered secret changes
+        role        = "webapp-db" # Vault JWT-auth role (it holds the policies, e.g. webapp-db-policy)
+        change_mode = "restart"   # Restart the task when the rendered secret changes
       }
 
       # Render DB credentials from Vault's database secrets engine
       template {
         destination = "secrets/db.env"
-        env         = true            # Inject rendered vars as environment variables
+        env         = true # Inject rendered vars as environment variables
         data        = <<EOF
 {{ with secret "database/creds/webapp" }}
 DB_USERNAME={{ .Data.username }}
@@ -124,8 +124,8 @@ EOF
 
       # Lifecycle: sidecar runs alongside main task
       lifecycle {
-        hook    = "poststart"   # Start after main task is running
-        sidecar = true          # Keep running as long as main task runs
+        hook    = "poststart" # Start after main task is running
+        sidecar = true        # Keep running as long as main task runs
       }
 
       config {

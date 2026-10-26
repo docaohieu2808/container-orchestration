@@ -21,6 +21,12 @@ on_exit() {
 }
 trap on_exit EXIT
 
+# in_cluster_get <url>: GET from a throw-away busybox pod and print the body. The result is captured by the
+# caller rather than piped into `grep -q`, which would close the pipe early and trip pipefail (SIGPIPE).
+in_cluster_get() {
+  kubectl -n "${NS}" run "curl-$RANDOM" --rm -i --restart=Never --image=busybox:1.37 --quiet -- wget -qO- -T 5 "$1"
+}
+
 echo "== l1: namespace, pod, services"
 kubectl apply -f "${K8S}/l1-pods-services/namespace-demo-environment-isolation.yaml"
 kubectl apply -f "${K8S}/l1-pods-services/"
@@ -28,15 +34,15 @@ kubectl -n "${NS}" wait pod/nginx-basic --for=condition=Ready --timeout=180s
 
 # The three Services select app=nginx,tier=web, which the Pod carries. Prove ClusterIP routing from inside.
 kubectl -n "${NS}" get endpoints nginx-clusterip nginx-nodeport -o wide
-kubectl -n "${NS}" run curl-l1 --rm -i --restart=Never --image=busybox:1.37 --quiet -- \
-  wget -qO- -T 5 http://nginx-clusterip.demo.svc/ | grep -q "Welcome to nginx"
+body="$(in_cluster_get http://nginx-clusterip.demo.svc/)"
+grep -q "Welcome to nginx" <<<"${body}"
 
 echo "== l2: configmap, secret, quota, deployment, hpa"
 kubectl apply -f "${K8S}/l2-deployments-configmaps-secrets/"
 kubectl -n "${NS}" rollout status deployment/nginx-deployment --timeout=180s
 # The ConfigMap is mounted as a file: nginx serves /health from it (the default image config has no /health).
-kubectl -n "${NS}" run curl-l2 --rm -i --restart=Never --image=busybox:1.37 --quiet -- \
-  wget -qO- -T 5 http://nginx-clusterip.demo.svc/health | grep -q OK
+body="$(in_cluster_get http://nginx-clusterip.demo.svc/health)"
+grep -q OK <<<"${body}"
 kubectl -n "${NS}" get hpa nginx-hpa
 kubectl -n "${NS}" describe resourcequota demo-namespace-quota
 
