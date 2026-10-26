@@ -10,6 +10,14 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 export NOMAD_ADDR="http://127.0.0.1:4646"
 AGENT_LOG="$(mktemp)"
 
+# Validate offline (nothing listens on port 1, so the CLI skips the agent-side checks): a dev agent has no
+# Vault or Consul, so it would reject the jobs that need them (l2, l3) even though their spec is valid.
+echo "== validate all jobs (spec only)"
+for f in "${ROOT}"/nomad/*/*.nomad.hcl; do
+  echo "-- ${f#"${ROOT}"/}"
+  NOMAD_ADDR="http://127.0.0.1:1" nomad job validate "${f}"
+done
+
 nomad agent -dev -bind=127.0.0.1 >"${AGENT_LOG}" 2>&1 &
 AGENT_PID=$!
 cleanup() {
@@ -29,12 +37,6 @@ for _ in $(seq 1 60); do
   sleep 2
 done
 nomad node status | grep -q ready
-
-echo "== validate all jobs"
-for f in "${ROOT}"/nomad/*/*.nomad.hcl; do
-  echo "-- ${f#"${ROOT}"/}"
-  nomad job validate "${f}"
-done
 
 echo "== l1: run the nginx job"
 nomad job run "${ROOT}/nomad/l1-job-spec-basic/nginx-web-server-docker-driver.nomad.hcl"
