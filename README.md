@@ -118,7 +118,7 @@ headers. Images named `myapp` are placeholders for your own application.
 | Job | Checks |
 | :-- | :-- |
 | `lint` | actionlint, shellcheck, `yamllint --strict`, hadolint on both Dockerfiles, every action pinned to an existing commit SHA |
-| `manifests` | `kubeconform -strict` against Kubernetes 1.37 for all Kubernetes/k3s manifests; schemas for WebApp, Traefik and System Upgrade Controller resources are converted from their real CRDs, nothing is skipped |
+| `manifests` | `kubeconform -strict` against Kubernetes 1.37 for all Kubernetes/k3s manifests; schemas for WebApp, Traefik and System Upgrade Controller resources are converted from their real CRDs. Only the CRD object itself is skipped (it has no published schema); the kind job applies it to a real API server |
 | `helm` | Helm 4 `lint` + `template` of the l2 chart with the lab values, the output validated by kubeconform, overrides asserted in the rendered YAML |
 | `go` | for the controller and the webhook: gofmt, `go mod tidy` clean, `go vet`, `go test -race`, `go build`; controller-gen output matches the committed code and CRD |
 | `kind (kubernetes l1-l3)` | applies and rolls out l1-l3 on kind, curls the Services, binds the PVC, checks RBAC |

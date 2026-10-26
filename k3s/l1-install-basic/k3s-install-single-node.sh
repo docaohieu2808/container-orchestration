@@ -8,10 +8,10 @@
 # e.g. a free-tier Oracle ARM instance).
 #
 # Prerequisites:
-#   - A systemd Linux host (Ubuntu 22.04+/Oracle Linux), root or sudo
+#   - A systemd Linux host (Ubuntu 22.04+ or Oracle Linux), root or sudo
 #   - Inbound ports open: 6443 (K8s API), 80/443 (Traefik), 10250 (kubelet)
 #
-# Usage: sudo bash k3s-install-single-node-oracle-server.sh
+# Usage: sudo bash k3s-install-single-node.sh
 # Optional environment:
 #   K3S_VERSION  release to install (default below: current "stable" channel at the time of writing)
 #   NODE_IP      private IP to advertise (and add to the API certificate); autodetected when empty
