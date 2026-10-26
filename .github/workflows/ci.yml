@@ -297,6 +297,6 @@ jobs:
           sudo unzip -o "nomad_${NOMAD_VERSION}_linux_amd64.zip" nomad -d /usr/local/bin
           nomad version
       - name: nomad fmt -check
-        run: nomad fmt -check -diff -recursive nomad
+        run: nomad fmt -check -recursive nomad
       - name: Validate every job, run l1 and l-max on a dev agent
         run: sudo -E env "PATH=$PATH" bash ci/nomad-dev-agent-smoke.sh
