@@ -112,7 +112,7 @@ EOF
       # path (the default "any" treats it as a directory). Relative paths are inside the task dir,
       # and ${NOMAD_TASK_DIR} is its local/ directory, so this lands at ${NOMAD_TASK_DIR}/schema.json.
       artifact {
-        source      = "https://raw.githubusercontent.com/docaohieu2808/container-orchestration/main/nomad/l-max-parameterized-dispatch/report-schema.json"
+        source      = "https://raw.githubusercontent.com/docaohieu2808/container-orchestration/master/nomad/l-max-parameterized-dispatch/report-schema.json"
         destination = "local/schema.json"
         mode        = "file"
       }

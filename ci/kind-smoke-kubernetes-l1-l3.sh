@@ -37,6 +37,10 @@ kubectl -n "${NS}" get endpoints nginx-clusterip nginx-nodeport -o wide
 body="$(in_cluster_get http://nginx-clusterip.demo.svc/)"
 grep -q "Welcome to nginx" <<<"${body}"
 
+# The Pod and the Deployment's Pods share the labels the Services select. The Pod has the stock nginx config
+# (no /health), so remove it before l2 or half of the requests below would hit it.
+kubectl -n "${NS}" delete pod nginx-basic --wait=true
+
 echo "== l2: configmap, secret, quota, deployment, hpa"
 kubectl apply -f "${K8S}/l2-deployments-configmaps-secrets/"
 kubectl -n "${NS}" rollout status deployment/nginx-deployment --timeout=180s

@@ -36,6 +36,7 @@ kubectl -n "${NS}" rollout status deployment/webapp-operator --timeout=180s
 
 echo "== l5: the controller reconciles a sample WebApp"
 kubectl apply -f "${K8S}/l4-operators-crds/cr-webapp-instance-example.yaml"
+kubectl -n "${NS}" wait deployment/my-webapp --for=create --timeout=60s
 kubectl -n "${NS}" wait deployment/my-webapp --for=condition=Available --timeout=180s
 kubectl -n "${NS}" wait webapp/my-webapp --for=jsonpath='{.status.phase}'=Running --timeout=120s
 kubectl -n "${NS}" get webapp my-webapp
