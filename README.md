@@ -36,10 +36,10 @@ kubectl -n demo rollout status deploy/nginx-deployment
 ```
 
 [`ci/kind-smoke-kubernetes-l1-l3.sh`](ci/kind-smoke-kubernetes-l1-l3.sh) is the whole l1-l3 walkthrough as a script
-(it also shows the PVC binding, RBAC `can-i` checks and the NetworkPolicies, applied last because default-deny cuts
-egress). The pods use `nginxinc/nginx-unprivileged` (non-root, port 8080) with a restricted-style `securityContext`.
-On plain kind the LoadBalancer Service stays `<pending>` (k3s's ServiceLB gives it the node IP); the Ingress object
-is accepted but needs an ingress controller (k3s ships Traefik) to route. ingress-nginx was retired in March 2026, so
+(it also shows the PVC binding, RBAC `can-i` checks, metrics-server feeding the HPA, a ResourceQuota rejection, Traefik
+routing the Ingress over TLS, and the NetworkPolicies, applied last because default-deny cuts egress). The pods use `nginxinc/nginx-unprivileged` (non-root, port 8080) with a restricted-style `securityContext`.
+On plain kind the LoadBalancer Service stays `<pending>` (k3s's ServiceLB gives it the node IP); the script installs
+Traefik with Helm (k3s ships it) so the Ingress actually routes. ingress-nginx was retired in March 2026, so
 the Ingress example uses Traefik.
 
 ### L4 and L5: operator
@@ -121,7 +121,7 @@ headers. Images named `myapp` are placeholders for your own application.
 | `manifests` | `kubeconform -strict` against Kubernetes 1.37 for all Kubernetes/k3s manifests; schemas for WebApp, Traefik and System Upgrade Controller resources are converted from their real CRDs. Only the CRD object itself is skipped (it has no published schema); the kind job applies it to a real API server |
 | `helm` | Helm 4 `lint` + `template` of the l2 chart with the lab values, the output validated by kubeconform, overrides asserted in the rendered YAML |
 | `go` | for the controller and the webhook: gofmt, `go mod tidy` clean, `go vet`, `go test -race`, `go build`; controller-gen output matches the committed code and CRD |
-| `kind (kubernetes l1-l3)` | applies and rolls out l1-l3 on kind, curls the Services, binds the PVC, checks RBAC |
+| `kind (kubernetes l1-l3)` | applies and rolls out l1-l3 on kind, curls the Services, binds the PVC, checks RBAC; HPA reads CPU and memory from metrics-server; a ResourceQuota rejects an over-limit ConfigMap; `curl` through Traefik (TLS, host routing) returns the app; NetworkPolicy behaviour: a non-Traefik pod times out, a Traefik-labelled pod connects on 8080 only, and Traefik still serves the app |
 | `kind (operator + webhook)` | builds both images, loads them into kind, then: CRD established, operator rolls out, a sample WebApp reconciles to Running, spec changes propagate, CRD schema rejects bad input, webhook rejects `:latest` and labels good objects, deleting a WebApp garbage-collects its children |
 | `k3s` | runs the l1 and l2 scripts on a real k3s (ServiceLB assigns an IP, Helm 4 installs podinfo with overrides, Traefik IngressRoutes redirect and route), l3 in dry-run, l4 plans server-side validated against the real CRD |
 | `nomad` | `nomad fmt -check`, `nomad job validate` on all four jobs, l1 runs on a dev agent and both allocations answer, l-max is dispatched with metadata and a payload |
