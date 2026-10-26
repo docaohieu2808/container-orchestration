@@ -1,0 +1,301 @@
+# Proves every level of the ladder works, on every push and once a week (so an upstream release that breaks a
+# level, such as a new Kubernetes, k3s, Helm or Nomad version, shows up here first):
+# - lint:        actionlint, shellcheck, yamllint, hadolint, every action pinned to a real commit;
+# - manifests:   kubeconform -strict on all Kubernetes/k3s manifests against Kubernetes 1.37, with the schemas of
+#                the custom resources (WebApp, Traefik, System Upgrade Controller) converted from their real CRDs;
+# - helm:        Helm 4 lint + template of the k3s l2 chart, rendered manifests validated too;
+# - go:          gofmt, go mod tidy, go vet, go test -race, go build for the controller and the webhook, and a check
+#                that the committed DeepCopy code and CRD match what controller-gen generates from the Go types;
+# - kind:        kubernetes l1-l3 applied to a kind cluster and rolled out; the CRD, the controller image built here
+#                and the webhook image built here reconcile and admit real WebApp objects;
+# - k3s:         k3s l1 and l2 scripts run on the runner (real k3s, ServiceLB, Traefik, Helm 4), l3 in dry-run mode,
+#                l4 plans server-side validated against the real System Upgrade Controller CRDs;
+# - nomad:       every job validated; l1 and l-max run on a `nomad agent -dev` with Docker.
+# Not run (need infrastructure a runner does not have): k3s l3 real 3-node HA, l4 real upgrades and S3 snapshots,
+# l-max registry mirrors; Nomad l2 (Vault) and l3 (Consul Connect). They are validated statically only.
+name: ci
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+  schedule:
+    - cron: "17 3 * * 1"   # Mondays 03:17 UTC (10:17 in Asia/Saigon)
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  K8S_VERSION: "1.37.0"
+  KIND_VERSION: "v0.33.0"
+  KIND_NODE_IMAGE: "kindest/node:v1.37.0@sha256:a1ed56cfb0e7b93589bdf97c8cd566405a265939e3620fc4f5de89adff580ae5"
+  KUBECONFORM_VERSION: "v0.8.0"
+  HELM_VERSION: "v4.3.1"
+  NOMAD_VERSION: "2.0.7"
+  ACTIONLINT_VERSION: "1.7.12"
+
+jobs:
+  lint:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: actionlint
+        run: |
+          bash <(curl -sSfL "https://raw.githubusercontent.com/rhysd/actionlint/v${ACTIONLINT_VERSION}/scripts/download-actionlint.bash") "$ACTIONLINT_VERSION"
+          ./actionlint -color
+      - name: shellcheck
+        run: shellcheck ci/*.sh k3s/*/*.sh kubernetes/l-max-admission-webhook/*.sh
+      - name: yamllint
+        run: |
+          pip install --quiet yamllint==1.38.0
+          yamllint --strict .
+      - name: hadolint (controller)
+        uses: hadolint/hadolint-action@06be81baf89a55ffd0e24b8f04a4185738dd3387 # v3.5.0
+        with:
+          dockerfile: kubernetes/l5-custom-controller/Dockerfile
+          failure-threshold: warning
+      - name: hadolint (webhook)
+        uses: hadolint/hadolint-action@06be81baf89a55ffd0e24b8f04a4185738dd3387 # v3.5.0
+        with:
+          dockerfile: kubernetes/l-max-admission-webhook/Dockerfile
+          failure-threshold: warning
+      - name: Every action is pinned to a commit SHA that exists
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # An annotated tag object's SHA looks like a commit SHA but fails when a job runs, so ask the API.
+          refs=$(grep -rhE '^[[:space:]]*(- )?uses: *[A-Za-z0-9_.-]+/[A-Za-z0-9_./-]+@' .github \
+            | sed -E 's/^[[:space:]]*(- )?uses: *//; s/[[:space:]].*$//' | sort -u)
+          status=0
+          while IFS=@ read -r ref sha; do
+            repo=$(echo "$ref" | cut -d/ -f1-2)
+            if ! [[ "$sha" =~ ^[0-9a-f]{40}$ ]]; then echo "FAIL $ref@$sha is not pinned to a SHA"; status=1
+            elif gh api "repos/$repo/commits/$sha" --jq .sha >/dev/null 2>&1; then echo "ok   $ref@$sha"
+            else echo "FAIL $ref@$sha is not a commit"; status=1; fi
+          done <<< "$refs"
+          exit "$status"
+
+  manifests:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install kubeconform and PyYAML
+        run: |
+          curl -fsSL "https://github.com/yannh/kubeconform/releases/download/${KUBECONFORM_VERSION}/kubeconform-linux-amd64.tar.gz" \
+            | sudo tar xz -C /usr/local/bin kubeconform
+          pip install --quiet pyyaml==6.0.3
+      - name: kubeconform -strict (Kubernetes ${{ env.K8S_VERSION }} + CRD schemas)
+        run: bash ci/kubeconform-all-manifests.sh
+
+  helm:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install Helm and kubeconform
+        run: |
+          curl -fsSL "https://get.helm.sh/helm-${HELM_VERSION}-linux-amd64.tar.gz" | sudo tar xz -C /usr/local/bin --strip-components=1 linux-amd64/helm
+          curl -fsSL "https://github.com/yannh/kubeconform/releases/download/${KUBECONFORM_VERSION}/kubeconform-linux-amd64.tar.gz" \
+            | sudo tar xz -C /usr/local/bin kubeconform
+          helm version --short
+      - name: helm lint + template the l2 chart with the lab values
+        run: |
+          # Same chart, version and values as k3s/l2-helm-traefik/helm-install-app-chart-with-values-override.sh
+          chart=oci://ghcr.io/stefanprodan/charts/podinfo
+          version=$(sed -n 's/^APP_CHART_VERSION=.*:-\([^}]*\)}.*/\1/p' k3s/l2-helm-traefik/helm-install-app-chart-with-values-override.sh)
+          test -n "$version"
+          helm pull "$chart" --version "$version" --untar --untardir "$RUNNER_TEMP"
+          helm lint "$RUNNER_TEMP/podinfo" --values k3s/l2-helm-traefik/podinfo-values-override.yaml --set replicaCount=2
+          helm template my-app "$RUNNER_TEMP/podinfo" --namespace demo \
+            --values k3s/l2-helm-traefik/podinfo-values-override.yaml --set replicaCount=2 > "$RUNNER_TEMP/rendered.yaml"
+          kubeconform -strict -summary -kubernetes-version "$K8S_VERSION" "$RUNNER_TEMP/rendered.yaml"
+          # The overrides must actually reach the rendered objects.
+          grep -q 'replicas: 2' "$RUNNER_TEMP/rendered.yaml"
+          grep -q 'memory: 256Mi' "$RUNNER_TEMP/rendered.yaml"
+          grep -q 'Hello from the container-orchestration k3s l2 lab' "$RUNNER_TEMP/rendered.yaml"
+      - name: Helm 4 accepts the flags the script uses
+        run: |
+          helm upgrade --help | grep -q -- '--rollback-on-failure'
+          helm upgrade --help | grep -q -- '--wait WaitStrategy'
+
+  go:
+    name: go (${{ matrix.name }})
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: l5 controller
+            dir: kubernetes/l5-custom-controller
+            generated: true
+          - name: l-max webhook
+            dir: kubernetes/l-max-admission-webhook
+            generated: false
+    defaults:
+      run:
+        working-directory: ${{ matrix.dir }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: ${{ matrix.dir }}/go.mod
+          cache-dependency-path: ${{ matrix.dir }}/go.sum
+      - name: gofmt
+        run: test -z "$(gofmt -l .)" || { gofmt -d .; exit 1; }
+      - name: go mod tidy leaves go.mod and go.sum unchanged
+        run: go mod tidy && git diff --exit-code -- go.mod go.sum
+      - name: go vet
+        run: go vet ./...
+      - name: go test
+        run: go test -race -count=1 ./...
+      - name: go build
+        run: go build -o /dev/null .
+      - name: DeepCopy code and CRD match the Go types (controller-gen)
+        if: matrix.generated
+        run: |
+          make generate manifests
+          git diff --exit-code -- . ../l4-operators-crds
+
+  kind-manifests:
+    name: kind (kubernetes l1-l3)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install kind
+        run: |
+          curl -fsSLo kind "https://github.com/kubernetes-sigs/kind/releases/download/${KIND_VERSION}/kind-linux-amd64"
+          sudo install -m 0755 kind /usr/local/bin/kind
+      - name: Create cluster
+        run: kind create cluster --name lab --image "$KIND_NODE_IMAGE" --wait 180s
+      - name: Apply l1-l3 and verify
+        run: bash ci/kind-smoke-kubernetes-l1-l3.sh
+
+  kind-operator:
+    name: kind (operator + webhook)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Build the controller and webhook images
+        run: |
+          docker build -t webapp-operator:dev kubernetes/l5-custom-controller
+          docker build -t webapp-webhook:dev kubernetes/l-max-admission-webhook
+      - name: Install kind
+        run: |
+          curl -fsSLo kind "https://github.com/kubernetes-sigs/kind/releases/download/${KIND_VERSION}/kind-linux-amd64"
+          sudo install -m 0755 kind /usr/local/bin/kind
+      - name: Create cluster and load the images
+        run: |
+          kind create cluster --name lab --image "$KIND_NODE_IMAGE" --wait 180s
+          kind load docker-image webapp-operator:dev webapp-webhook:dev --name lab
+      - name: CRD, controller and webhook against the live cluster
+        run: bash ci/kind-smoke-operator-and-webhook.sh
+
+  k3s:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: l1 - install k3s with the lab script
+        run: |
+          sudo env KUBECONFIG_USER_HOME="$HOME" bash k3s/l1-install-basic/k3s-install-single-node.sh
+          kubectl get nodes -o wide
+          # ServiceLB is left enabled, so a LoadBalancer Service (Traefik) gets the node IP, not <pending>.
+          for _ in $(seq 1 60); do
+            ip=$(kubectl -n kube-system get svc traefik -o jsonpath='{.status.loadBalancer.ingress[0].ip}')
+            [ -n "$ip" ] && break
+            sleep 5
+          done
+          test -n "$ip"
+          kubectl -n kube-system rollout status deployment/traefik --timeout=180s
+      - name: l2 - Helm 4 chart install with values override
+        run: |
+          # The runner image ships its own Helm; remove it so the script's installer path is what runs.
+          sudo rm -f "$(command -v helm)"
+          bash k3s/l2-helm-traefik/helm-install-app-chart-with-values-override.sh
+          helm version --short | grep -q '^v4\.'
+          test "$(kubectl -n demo get deploy my-app-podinfo -o jsonpath='{.spec.replicas}')" = 2
+      - name: l2 - Traefik IngressRoute, Middleware and redirect
+        run: |
+          kubectl apply -f k3s/l2-helm-traefik/traefik-ingressroute-host-tls-middleware.yaml
+          sleep 5
+          # HTTP -> HTTPS permanent redirect through the redirect-https middleware
+          code=$(curl -s -o /dev/null -w '%{http_code}' -H 'Host: demo.example.com' http://127.0.0.1/)
+          test "$code" = 301
+          # HTTPS route reaches the Helm-installed app (self-signed default Traefik cert, hence -k)
+          curl -fsSk --resolve demo.example.com:443:127.0.0.1 -H 'Accept: application/json' https://demo.example.com/ \
+            | grep -q 'Hello from the container-orchestration k3s l2 lab'
+          # /api is stripped by the strip-api-prefix middleware: /api/version -> /version
+          curl -fsSk --resolve demo.example.com:443:127.0.0.1 https://demo.example.com/api/version | grep -q '"version"'
+      - name: l3 - HA script in dry-run mode (init and join build consistent server commands)
+        run: |
+          export DRY_RUN=1 K3S_TOKEN=ci-not-a-secret SERVER1_IP=192.0.2.11 VIP=192.0.2.10
+          init=$(NODE_ROLE=init bash k3s/l3-ha-cluster/k3s-ha-3-node-embedded-etcd-setup.sh)
+          join=$(NODE_ROLE=join NODE_IP=192.0.2.12 bash k3s/l3-ha-cluster/k3s-ha-3-node-embedded-etcd-setup.sh)
+          echo "$init"; echo "$join"
+          echo "$init" | grep -q -- '--cluster-init'
+          echo "$join" | grep -q -- '--server=https://192.0.2.11:6443'
+          for out in "$init" "$join"; do
+            echo "$out" | grep -q -- '--tls-san=192.0.2.10'
+            echo "$out" | grep -q -- '--etcd-expose-metrics=true'
+            if echo "$out" | grep -q -- '--cluster-dns'; then echo "--cluster-dns takes an IP, not a domain"; exit 1; fi
+            if echo "$out" | grep -q 'ci-not-a-secret'; then echo "token leaked into output"; exit 1; fi
+          done
+          # Required inputs are enforced
+          if env -u K3S_TOKEN DRY_RUN=1 SERVER1_IP=192.0.2.11 bash k3s/l3-ha-cluster/k3s-ha-3-node-embedded-etcd-setup.sh 2>/dev/null; then
+            echo "missing K3S_TOKEN must fail"; exit 1
+          fi
+      - name: l4 - upgrade Plans validated server-side against the real System Upgrade Controller CRD
+        run: |
+          kubectl apply -f "https://github.com/rancher/system-upgrade-controller/releases/download/v0.20.2/crd.yaml"
+          kubectl wait --for=condition=Established crd/plans.upgrade.cattle.io --timeout=60s
+          kubectl create namespace system-upgrade
+          kubectl apply --dry-run=server -f k3s/l4-auto-upgrade-backup/system-upgrade-plan-k3s-automatic-version.yaml
+      - name: Diagnostics
+        if: failure()
+        run: |
+          kubectl get pods -A -o wide || true
+          sudo journalctl -u k3s --no-pager -n 100 || true
+
+  nomad:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install Nomad
+        run: |
+          base="https://releases.hashicorp.com/nomad/${NOMAD_VERSION}"
+          curl -fsSLO "${base}/nomad_${NOMAD_VERSION}_linux_amd64.zip"
+          curl -fsSLO "${base}/nomad_${NOMAD_VERSION}_SHA256SUMS"
+          grep "nomad_${NOMAD_VERSION}_linux_amd64.zip" "nomad_${NOMAD_VERSION}_SHA256SUMS" | sha256sum -c -
+          sudo unzip -o "nomad_${NOMAD_VERSION}_linux_amd64.zip" nomad -d /usr/local/bin
+          nomad version
+      - name: nomad fmt -check
+        run: nomad fmt -check -diff -recursive nomad
+      - name: Validate every job, run l1 and l-max on a dev agent
+        run: sudo -E env "PATH=$PATH" bash ci/nomad-dev-agent-smoke.sh

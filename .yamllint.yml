@@ -1,0 +1,16 @@
+extends: default
+
+rules:
+  line-length: disable          # explanatory comments and long image references are fine
+  document-start: disable       # most manifests are single documents without ---
+  truthy:
+    check-keys: false           # GitHub Actions uses `on:`
+  comments:
+    min-spaces-from-content: 1
+  comments-indentation: disable
+  indentation:
+    spaces: 2
+    indent-sequences: consistent
+
+ignore: |
+  .git/
