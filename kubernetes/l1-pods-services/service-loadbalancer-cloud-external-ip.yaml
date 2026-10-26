@@ -1,7 +1,7 @@
 # L1: Service — LoadBalancer (Cloud External IP)
 # LoadBalancer extends NodePort by provisioning an external load balancer via the cloud provider.
-# On bare-metal/K3s, use MetalLB or Klipper LB (K3s built-in) to get an external IP.
-# K3s on Oracle server uses Klipper which assigns the node IP as the external IP.
+# On bare-metal/K3s, use MetalLB or ServiceLB (formerly Klipper, built into K3s) to get an external IP.
+# K3s's ServiceLB assigns the node IP as the external IP (the k3s/l1 install script leaves it enabled).
 apiVersion: v1
 kind: Service
 metadata:
@@ -18,7 +18,7 @@ spec:
     - name: http
       protocol: TCP
       port: 80        # External port exposed by the load balancer
-      targetPort: 80  # Pod container port
-  # On K3s (Oracle 10.10.0.5), Klipper LB will assign node IP as EXTERNAL-IP.
+      targetPort: 8080  # Pod container port
+  # On K3s, ServiceLB assigns the node IP as EXTERNAL-IP.
   # On cloud (GKE/EKS/AKS), a cloud LB is provisioned automatically.
-  # loadBalancerIP: 10.10.0.5   # Uncomment to request a specific IP (if supported)
+  # On a plain kind/minikube cluster EXTERNAL-IP stays <pending> unless you add MetalLB or run a tunnel.

@@ -12,18 +12,19 @@ metadata:
 data:
   # Key-value pairs injected as environment variables (envFrom / env.valueFrom)
   APP_ENV: "production"
-  APP_PORT: "80"
+  APP_PORT: "8080"
   LOG_LEVEL: "info"
   MAX_CONNECTIONS: "100"
 
-  # Multi-line value mounted as a file via volumeMounts
+  # Multi-line value mounted as a file via volumeMounts (the Deployment mounts it over
+  # /etc/nginx/conf.d/default.conf). The unprivileged nginx image listens on 8080.
   nginx.conf: |
     server {
-        listen 80;
+        listen 8080;
         server_name _;
 
-        access_log /var/log/nginx/access.log;
-        error_log  /var/log/nginx/error.log;
+        access_log /dev/stdout;
+        error_log  /dev/stderr;
 
         location / {
             root   /usr/share/nginx/html;

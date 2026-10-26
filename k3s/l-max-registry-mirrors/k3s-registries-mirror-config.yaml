@@ -1,0 +1,46 @@
+# L-MAX: K3s — Registry Mirror Configuration (registries.yaml)
+# K3s reads /etc/rancher/k3s/registries.yaml at startup and generates containerd's registry config from it.
+# Use cases:
+#   1. Pull-through cache for Docker Hub to avoid rate limits
+#   2. Use a private registry (Harbor, ECR, GHCR) without changing image references
+#   3. Air-gapped clusters: send every pull to an internal server
+# See also embedded-registry-spegel-config.yaml for the peer-to-peer mirror K3s ships (--embedded-registry).
+#
+# Deploy: copy this file to /etc/rancher/k3s/registries.yaml on EVERY K3s node, then restart K3s:
+#   systemctl restart k3s (server)   or   systemctl restart k3s-agent (agent)
+#
+# A `registry:3` container in pull-through mode proxies exactly ONE upstream (REGISTRY_PROXY_REMOTEURL),
+# so each upstream below points at its own mirror instance (here: one port per upstream).
+mirrors:
+  # Docker Hub through a local cache (avoids the anonymous pull limit)
+  "docker.io":
+    endpoint:
+      - "http://registry-mirror.local:5000"    # registry:3 with REGISTRY_PROXY_REMOTEURL=https://registry-1.docker.io
+      # When every endpoint fails, containerd falls back to the original registry (default endpoint
+      # fallback), so docker.io needs no explicit fallback entry.
+
+  # GitHub Container Registry through its own cache
+  "ghcr.io":
+    endpoint:
+      - "http://registry-mirror.local:5001"    # registry:3 with REGISTRY_PROXY_REMOTEURL=https://ghcr.io
+
+  # Private registry rewrite: images pulled as "private.example.com/myapp:v1"
+  # are served from the internal Harbor instance
+  "private.example.com":
+    endpoint:
+      - "https://harbor.internal.example.com"
+
+configs:
+  # Auth and TLS for the private registry
+  "harbor.internal.example.com":
+    auth:
+      username: robot-account                          # Registry username (a Harbor robot account)
+      password: "<harbor-robot-account-secret>"        # PLACEHOLDER: never commit a real secret; template this file at deploy time
+    tls:
+      # Provide the CA certificate if Harbor uses a private/self-signed CA
+      ca_file: /etc/rancher/k3s/certs/harbor-ca.crt
+      # Or disable verification for an HTTPS endpoint (NOT recommended for production):
+      # insecure_skip_verify: true
+
+# Plain-HTTP mirrors such as registry-mirror.local above need no `configs` entry: the http:// scheme in
+# the endpoint is enough. (tls.insecure_skip_verify only matters for https:// endpoints.)

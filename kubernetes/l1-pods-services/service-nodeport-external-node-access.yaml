@@ -18,5 +18,5 @@ spec:
     - name: http
       protocol: TCP
       port: 80          # ClusterIP port (internal)
-      targetPort: 80    # Pod container port
+      targetPort: 8080  # Pod container port
       nodePort: 30080   # External port on every node (30000-32767)

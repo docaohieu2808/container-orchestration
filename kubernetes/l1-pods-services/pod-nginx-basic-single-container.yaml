@@ -3,6 +3,7 @@
 # It wraps one or more containers that share network and storage.
 # In production, Pods are managed by higher-level controllers (Deployment, StatefulSet).
 # Direct Pod creation is used for learning, debugging, or one-off tasks.
+# The image is the unprivileged nginx build: it runs as a non-root user and listens on 8080.
 apiVersion: v1
 kind: Pod
 metadata:
@@ -14,10 +15,14 @@ metadata:
 spec:
   containers:
     - name: nginx
-      image: nginx:1.25-alpine
+      image: nginxinc/nginx-unprivileged:1.30.6-alpine
       ports:
-        - containerPort: 80
+        - containerPort: 8080
           protocol: TCP
+      securityContext:
+        allowPrivilegeEscalation: false
+        capabilities:
+          drop: ["ALL"]
       resources:
         requests:
           cpu: "50m"
@@ -28,13 +33,17 @@ spec:
       readinessProbe:
         httpGet:
           path: /
-          port: 80
+          port: 8080
         initialDelaySeconds: 5
         periodSeconds: 10
       livenessProbe:
         httpGet:
           path: /
-          port: 80
+          port: 8080
         initialDelaySeconds: 15
         periodSeconds: 20
+  securityContext:
+    runAsNonRoot: true
+    seccompProfile:
+      type: RuntimeDefault
   restartPolicy: Always

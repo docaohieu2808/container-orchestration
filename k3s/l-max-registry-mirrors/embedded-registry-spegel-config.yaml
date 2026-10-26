@@ -1,0 +1,25 @@
+# L-MAX: K3s — Embedded Registry Mirror (Spegel), peer-to-peer image sharing between nodes
+# K3s embeds Spegel: every node that already pulled an image can serve it to the other nodes, so the
+# upstream registry is hit once per image instead of once per node. It needs two pieces:
+#
+# 1. On server nodes, enable the mirror in the K3s config
+#    (/etc/rancher/k3s/config.yaml, or pass --embedded-registry):
+#      embedded-registry: true
+#    Nodes must reach each other on TCP 5001 (registry) and 6443 using their internal IPs.
+#
+# 2. On all nodes, list the registries to share in /etc/rancher/k3s/registries.yaml (this file).
+#    A mirrors entry may be empty; it only has to be present. The quoted "*" wildcard enables every registry:
+mirrors:
+  "*":
+
+# Or pick registries one by one, optionally with a fallback endpoint after the peer-to-peer lookup:
+# mirrors:
+#   docker.io:
+#   registry.k8s.io:
+#   ghcr.io:
+#     endpoint:
+#       - "https://mirror.example.com"
+#
+# The embedded registry is read-only (you cannot `docker push` to it). Warm it with
+#   ctr -n k8s.io image pull <image>
+# on any node, then restart K3s: systemctl restart k3s / k3s-agent.
