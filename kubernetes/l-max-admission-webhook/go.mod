@@ -3,8 +3,8 @@ module github.com/docaohieu2808/container-orchestration/kubernetes/l-max-admissi
 go 1.27.0
 
 require (
-	k8s.io/api v0.37.1
-	k8s.io/apimachinery v0.37.1
+	k8s.io/api v0.37.2
+	k8s.io/apimachinery v0.37.2
 )
 
 require (
